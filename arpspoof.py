@@ -359,6 +359,27 @@ def add_event(src_ip, kind, host):
 
         state["devices"][src_ip] = dev
 
+def refresh_arp_hostnames():
+    """Periodically refresh device hostnames from ARP table."""
+    while True:
+        try:
+            arp = get_arp_table()
+            with state_lock:
+                for ip, entry in arp.items():
+                    dev = state["devices"].get(ip)
+                    if dev and entry.get("hostname"):
+                        if not dev.get("hostname") or dev["hostname"] != entry["hostname"]:
+                            dev["hostname"] = entry["hostname"]
+                            # Re-detect device type with new hostname
+                            if HAS_DEVICE_DETECT:
+                                info = detect_device(entry["hostname"], dev.get("vendor", ""))
+                                dev["device_type"] = info["type"]
+                                dev["device_model"] = info["model"]
+                                dev["device_icon"] = info["icon"]
+        except Exception:
+            pass
+        time.sleep(30)
+
 def write_state():
     while True:
         with state_lock:
@@ -632,6 +653,10 @@ def main():
     # Start state writer
     state_thread = threading.Thread(target=write_state, daemon=True)
     state_thread.start()
+    
+    # Start ARP hostname refresher
+    refresh_thread = threading.Thread(target=refresh_arp_hostnames, daemon=True)
+    refresh_thread.start()
     
     # Signal handler for cleanup
     def cleanup(sig, frame):
