@@ -22,9 +22,21 @@ except ImportError:
     sys.exit(1)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
+try:
+    from device_detect import detect_device
+    HAS_DEVICE_DETECT = True
+except ImportError:
+    HAS_DEVICE_DETECT = False
+try:
+    from oui_db import lookup_vendor
+    HAS_OUI = True
+except ImportError:
+    HAS_OUI = False
+
 DATA = os.path.join(ROOT, "data")
 IFACE = "en0"
-SPOOF_INTERVAL = 2  # seconds between ARP replies
+SPOOF_INTERVAL = 2
 LOGFILE = "/tmp/netwatch-arpspoof.log"
 
 # ─── State ───────────────────────────────────────────────────────────
@@ -165,36 +177,142 @@ def parse_sni(p):
                 nlen = struct.unpack_from(">H", p, off + 3)[0]
                 if off + 5 + nlen <= len(p):
                     return p[off + 5:off + 5 + nlen].decode("utf-8", "replace")
+                break
             off += elen
     except Exception:
         pass
     return None
 
+def parse_http_host(payload):
+    """Extract Host header and URL path from HTTP request."""
+    try:
+        text = payload.decode("utf-8", "replace")
+        if not text.startswith(("GET ", "POST ", "HEAD ", "PUT ", "DELETE ", "CONNECT ")):
+            return None, None
+        lines = text.split("\r\n")
+        if not lines:
+            return None, None
+        # Parse request line: GET /path HTTP/1.1
+        parts = lines[0].split()
+        path = parts[1] if len(parts) > 1 else "/"
+        host = None
+        for line in lines[1:]:
+            if line.lower().startswith("host:"):
+                host = line.split(":", 1)[1].strip()
+                break
+        return host, path
+    except:
+        return None, None
+
+# CDN/content pattern matching
+CDN_PATTERNS = {
+    "tiktok": {"patterns": ["tiktokcdn.com", "tiktokv.com", "tiktok.com", "byteoversea.com"],
+               "icon": "🎵", "type": "video"},
+    "youtube": {"patterns": ["youtube.com", "ytimg.com", "googlevideo.com", "youtu.be"],
+                "icon": "📺", "type": "video"},
+    "instagram": {"patterns": ["instagram.com", "cdninstagram.com", "fbcdn.net"],
+                  "icon": "📸", "type": "social"},
+    "facebook": {"patterns": ["facebook.com", "fbcdn.net", "fb.com"],
+                 "icon": "👤", "type": "social"},
+    "twitter": {"patterns": ["twitter.com", "x.com", "twimg.com"],
+                "icon": "🐦", "type": "social"},
+    "netflix": {"patterns": ["netflix.com", "nflxvideo.net", "nflximg.net"],
+                "icon": "🎬", "type": "streaming"},
+    "spotify": {"patterns": ["spotify.com", "scdn.co", "spotifycdn.com"],
+                "icon": "🎧", "type": "music"},
+    "twitch": {"patterns": ["twitch.tv", "ttvnw.net", "jtvnw.net"],
+               "icon": "🎮", "type": "streaming"},
+    "amazon": {"patterns": ["amazon.com", "amazonaws.com", "cloudfront.net"],
+               "icon": "📦", "type": "shopping"},
+    "google": {"patterns": ["google.com", "googleapis.com", "gstatic.com", "ggpht.com"],
+               "icon": "🔍", "type": "search"},
+    "apple": {"patterns": ["apple.com", "icloud.com", "mzstatic.com"],
+              "icon": "🍎", "type": "services"},
+    "discord": {"patterns": ["discord.com", "discord.gg", "discordapp.com"],
+                "icon": "💬", "type": "chat"},
+    "reddit": {"patterns": ["reddit.com", "redd.it", "redditstatic.com"],
+               "icon": "🤖", "type": "forum"},
+    "whatsapp": {"patterns": ["whatsapp.com", "whatsapp.net", "wa.me"],
+                 "icon": "📱", "type": "messaging"},
+    "telegram": {"patterns": ["telegram.org", "t.me", "telegram.me"],
+                 "icon": "✈️", "type": "messaging"},
+}
+
+def classify_domain(domain):
+    """Classify a domain by CDN/content type. Returns (service, icon, content_type)."""
+    if not domain:
+        return None, "🌐", "unknown"
+    d = domain.lower()
+    for service, info in CDN_PATTERNS.items():
+        for pattern in info["patterns"]:
+            if pattern in d:
+                return service, info["icon"], info["type"]
+    return None, "🌐", "web"
+
 def add_event(src_ip, kind, host):
     with state_lock:
-        state["events"].append({"t": time.time(), "dev": src_ip, "kind": kind, "host": host})
+        # Classify domain for CDN/content type
+        service, icon, content_type = classify_domain(host)
+        event = {"t": time.time(), "dev": src_ip, "kind": kind, "host": host}
+        if service:
+            event["service"] = service
+            event["content_type"] = content_type
+        state["events"].append(event)
         state["events"] = state["events"][-500:]
         state["packets"] += 1
-        
+
         d = state["domains"].get(host, {"count": 0, "first": time.time(), "last": 0,
-                                         "kinds": defaultdict(int), "devs": defaultdict(int)})
+                                         "kinds": defaultdict(int), "devs": defaultdict(int),
+                                         "service": service, "content_type": content_type})
         d["count"] += 1
         d["last"] = time.time()
         d["kinds"][kind] += 1
         d["devs"][src_ip] += 1
+        if service and not d.get("service"):
+            d["service"] = service
+            d["content_type"] = content_type
         state["domains"][host] = d
-        
+
         dev = state["devices"].get(src_ip, {
             "ip": src_ip, "mac": "", "hostname": "", "vendor": "",
+            "device_type": "", "device_model": "", "device_icon": "📡",
             "interface": IFACE, "first_seen": time.time(), "last_seen": time.time(),
             "online": True, "traffic_events": 0, "domains": {}, "protocols": defaultdict(int),
+            "services": defaultdict(int), "urls": [],
         })
         dev["traffic_events"] += 1
         dev["last_seen"] = time.time()
         dev["online"] = True
         dev["protocols"][kind] = dev["protocols"].get(kind, 0) + 1
-        if kind == "tls" or kind == "dns":
+        if kind in ("tls", "dns", "http"):
             dev["domains"][host] = dev["domains"].get(host, 0) + 1
+        # Track services (tiktok, youtube, etc.)
+        if service:
+            dev.setdefault("services", defaultdict(int))
+            dev["services"][service] = dev["services"].get(service, 0) + 1
+        # Track interesting URLs (with paths)
+        if kind == "http" and "/" in host:
+            dev.setdefault("urls", [])
+            url_entry = {"url": host, "t": time.time(), "service": service}
+            dev["urls"].append(url_entry)
+            dev["urls"] = dev["urls"][-100:]  # Keep last 100 URLs
+
+        # Extract hostname from .local names and detect device type
+        hostname = dev.get("hostname", "")
+        if not hostname and kind == "mdns" and ".local" in host:
+            candidate = host.split(".")[0]
+            if candidate and not candidate.startswith("_"):
+                hostname = candidate
+                dev["hostname"] = hostname
+
+        # Device type/model detection
+        if HAS_DEVICE_DETECT and (not dev.get("device_type") or dev["device_type"] == "device"):
+            info = detect_device(hostname, dev.get("vendor", ""))
+            if info["type"] != "device" or not dev.get("device_type"):
+                dev["device_type"] = info["type"]
+                dev["device_model"] = info["model"]
+                dev["device_icon"] = info["icon"]
+
         state["devices"][src_ip] = dev
 
 def write_state():
@@ -207,9 +325,14 @@ def write_state():
                 "devices": {k: {
                     "ip": v["ip"], "mac": v["mac"], "vendor": v.get("vendor",""),
                     "hostname": v["hostname"], "interface": v["interface"],
+                    "device_type": v.get("device_type", "device"),
+                    "device_model": v.get("device_model", "Unknown Device"),
+                    "device_icon": v.get("device_icon", "📡"),
                     "first_seen": v["first_seen"], "last_seen": v["last_seen"],
                     "online": v["online"], "traffic_events": v["traffic_events"],
                     "domains": v["domains"], "protocols": dict(v["protocols"]),
+                    "services": dict(v.get("services", {})),
+                    "urls": v.get("urls", [])[-50:],
                 } for k, v in state["devices"].items()},
             }
             # Convert domains kinds/devs defaultdicts
@@ -218,6 +341,7 @@ def write_state():
                 out["domains"][host] = {
                     "count": d["count"], "first": d["first"], "last": d["last"],
                     "kinds": dict(d["kinds"]), "devs": dict(d["devs"]),
+                    "service": d.get("service"), "content_type": d.get("content_type"),
                 }
             state["updated"] = time.time()
             out["updated"] = state["updated"]
@@ -271,6 +395,7 @@ def handle_packet(pkt):
     
     elif pkt.haslayer(TCP) and pkt.haslayer(Raw):
         dport = pkt[TCP].dport
+        sport = pkt[TCP].sport
         payload = bytes(pkt[Raw].load)
         
         if dport == 443 and len(payload) > 5:
@@ -278,6 +403,19 @@ def handle_packet(pkt):
                 sni = parse_sni(payload)
                 if sni:
                     add_event(src_ip, "tls", sni)
+        
+        # HTTP traffic (port 80 or 8080)
+        elif (dport == 80 or dport == 8080) and len(payload) > 10:
+            host, path = parse_http_host(payload)
+            if host:
+                # Classify the domain
+                service, icon, content_type = classify_domain(host)
+                # Add event with URL path if interesting
+                if path and path != "/" and not path.startswith(("/favicon", "/robots.txt", "/sitemap")):
+                    full_url = f"{host}{path}"
+                    add_event(src_ip, "http", full_url)
+                else:
+                    add_event(src_ip, "http", host)
 
 # ─── ARP Spoofing ───────────────────────────────────────────────────
 class ARPSpoofer:
@@ -387,7 +525,28 @@ def main():
     # Filter out our own IP
     hosts = {ip: mac for ip, mac in hosts.items() if ip != my_ip}
     print(f"[*] {len(hosts)} targets to spoof")
-    
+
+    # Add discovered hosts to state with vendor/type/model
+    for ip, mac in hosts.items():
+        vendor = lookup_vendor(mac) if HAS_OUI else ""
+        info = detect_device("", vendor) if HAS_DEVICE_DETECT else {"type": "device", "model": "Unknown", "icon": "📡"}
+        with state_lock:
+            dev = state["devices"].get(ip, {
+                "ip": ip, "mac": mac, "vendor": vendor, "hostname": "",
+                "device_type": info["type"], "device_model": info["model"],
+                "device_icon": info["icon"],
+                "interface": IFACE, "first_seen": time.time(), "last_seen": time.time(),
+                "online": True, "traffic_events": 0, "domains": {}, "protocols": {},
+            })
+            dev["mac"] = mac
+            dev["vendor"] = vendor
+            if not dev.get("device_type") or dev["device_type"] == "device":
+                dev["device_type"] = info["type"]
+                dev["device_model"] = info["model"]
+                dev["device_icon"] = info["icon"]
+            state["devices"][ip] = dev
+    print(f"[+] Added {len(hosts)} devices to state")
+
     # Get gateway MAC
     arp_table = get_arp_table()
     gateway_mac = arp_table.get(gateway_ip)

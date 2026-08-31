@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""netwatch — CLI launcher for the netwatch network monitor.
+
+Usage:
+  netwatch start           Start MITM + panel
+  netwatch stop            Stop all services
+  netwatch status          Show live status
+  netwatch devices         List discovered devices with type/model
+  netwatch domains         Top domains being accessed
+  netwatch scan            Quick ARP scan
+  netwatch panel           Start only the web panel
+  netwatch mitm            Start only ARP MITM (needs sudo)
+  netwatch tail            Tail live events
+  netwatch install         Install to /usr/local/bin
+  netwatch uninstall       Remove from PATH
+"""
+import sys, os, time, json, argparse, subprocess, signal, shutil
+from pathlib import Path
+
+ROOT = Path(__file__).parent.resolve()
+DATA = ROOT / "data"
+STATE = DATA / "state.json"
+DEVICES = DATA / "devices.json"
+ARPSPOOF = ROOT / "arpspoof.py"
+START_SCRIPT = Path("/tmp/start-arpspoof.sh")
+LOG = Path("/tmp/netwatch-arpspoof.log")
+LOG_PANEL = Path("/tmp/netwatch-next.log")
+PANEL_DIR = ROOT / "panel"
+
+# ANSI colors
+R, G, Y, B, C, M, W, D = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[96m", "\033[95m", "\033[97m", "\033[2m"
+BOLD = "\033[1m"; RESET = "\033[0m"
+
+def color(c, s):
+    if sys.stdout.isatty():
+        return f"{c}{s}{RESET}"
+    return s
+
+def ok(s): return color(G + BOLD, f"✓ {s}")
+def warn(s): return color(Y + BOLD, f"⚠ {s}")
+def err(s): return color(R + BOLD, f"✗ {s}")
+def info(s): return color(B, f"ℹ {s}")
+
+def banner():
+    print(color(C + BOLD, r"""
+    _   __     __  _____           __
+   / | / /__  / /_/ ___/__  ______/ /__  _____
+  /  |/ / _ \/ __/\__ \/ / / / __  / _ \/ ___/
+ / /|  /  __/ /_ ___/ / /_/ / /_/ /  __/ /
+/_/ |_/\___/\__//____/\__,_/\__,_/\___/_/
+"""))
+    print(color(D, "  Real-time network monitor with ARP MITM + TLS interception"))
+    print(color(D, "  https://github.com/yunior123/netwatch\n"))
+
+# ─── Service management ─────────────────────────────────────────────
+def is_running(name):
+    """Check if a process is running by name."""
+    r = subprocess.run(["pgrep", "-fl", name], capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+def start_arpspoof():
+    """Start ARP MITM (needs sudo)."""
+    if is_running("arpspoof.py"):
+        print(info("ARP MITM already running"))
+        return True
+
+    # Ensure capture dir
+    DATA.mkdir(exist_ok=True)
+
+    # Build start script
+    START_SCRIPT.write_text(f"""#!/bin/bash
+cd {ROOT}
+/usr/bin/python3 -B {ARPSPOOF} >> {LOG} 2>&1
+""")
+    START_SCRIPT.chmod(0o755)
+
+    # Launch via osascript (sudo prompt)
+    print(info("Starting ARP MITM (sudo required)..."))
+    try:
+        subprocess.Popen([
+            "osascript", "-e",
+            f'do shell script "{START_SCRIPT}" with administrator privileges'
+        ])
+        time.sleep(8)
+        if is_running("arpspoof.py"):
+            print(ok("ARP MITM started"))
+            return True
+        print(err("ARP MITM failed to start — check /tmp/netwatch-arpspoof.log"))
+        return False
+    except Exception as e:
+        print(err(f"Failed to start: {e}"))
+        return False
+
+def stop_arpspoof():
+    """Stop ARP MITM."""
+    if not is_running("arpspoof.py"):
+        print(info("ARP MITM not running"))
+        return
+    print(info("Stopping ARP MITM..."))
+    subprocess.run(["pkill", "-9", "-f", "arpspoof.py"], check=False)
+    # Also kill root processes via osascript
+    try:
+        subprocess.run([
+            "osascript", "-e",
+            'do shell script "pkill -9 -f arpspoof.py 2>/dev/null" with administrator privileges'
+        ], check=False, capture_output=True)
+    except: pass
+    time.sleep(2)
+    if is_running("arpspoof.py"):
+        print(warn("Some processes survived"))
+    else:
+        print(ok("ARP MITM stopped"))
+
+def start_panel():
+    """Start Next.js panel."""
+    if is_running("next dev"):
+        print(info("Panel already running at http://localhost:3000"))
+        return True
+
+    print(info("Starting web panel..."))
+    subprocess.Popen(
+        ["npx", "next", "dev", "-p", "3000"],
+        cwd=PANEL_DIR,
+        stdout=open(LOG_PANEL, "a"),
+        stderr=subprocess.STDOUT,
+    )
+    time.sleep(5)
+    if is_running("next dev"):
+        print(ok("Panel started at http://localhost:3000"))
+        return True
+    print(err(f"Panel failed — check {LOG_PANEL}"))
+    return False
+
+def stop_panel():
+    if not is_running("next dev"):
+        print(info("Panel not running"))
+        return
+    print(info("Stopping panel..."))
+    subprocess.run(["pkill", "-f", "next dev"], check=False)
+    time.sleep(2)
+    print(ok("Panel stopped"))
+
+def load_state():
+    """Load current state."""
+    try:
+        return json.loads(STATE.read_text())
+    except:
+        return None
+
+def load_devices():
+    try:
+        return json.loads(DEVICES.read_text())
+    except:
+        return None
+
+# ─── Commands ───────────────────────────────────────────────────────
+def cmd_start(args):
+    banner()
+    arpspoof_ok = start_arpspoof()
+    panel_ok = start_panel()
+    if arpspoof_ok and panel_ok:
+        print()
+        print(ok("netwatch is live"))
+        print(info(f"  Panel:   http://localhost:3000"))
+        print(info(f"  Status:  netwatch status"))
+        print(info(f"  Devices: netwatch devices"))
+        print(info(f"  Domains: netwatch domains"))
+        print(info(f"  Stop:    netwatch stop"))
+
+def cmd_stop(args):
+    banner()
+    stop_arpspoof()
+    stop_panel()
+    print()
+    print(ok("netwatch stopped"))
+
+def cmd_status(args):
+    banner()
+    # Processes
+    arpspoof = is_running("arpspoof.py")
+    panel = is_running("next dev")
+
+    print(color(BOLD, "  Services"))
+    print(f"    ARP MITM:   {ok('running') if arpspoof else err('stopped')}")
+    print(f"    Web Panel:  {ok('running') if panel else err('stopped')}")
+    print()
+
+    # State
+    state = load_state()
+    if state:
+        age = time.time() - state.get("updated", 0)
+        fresh = color(G, f"{age:.0f}s ago") if age < 10 else color(Y, f"{age:.0f}s ago") if age < 60 else color(R, f"{age:.0f}s ago")
+        print(color(BOLD, "  Live State"))
+        print(f"    Packets:    {color(C, state.get('packets', 0))}")
+        print(f"    Domains:    {color(C, len(state.get('domains', {})))}")
+        print(f"    Devices:    {color(C, len(state.get('devices', {})))}")
+        print(f"    Updated:    {fresh}")
+        print(f"    Interface:  {color(C, state.get('iface', '—'))}")
+    else:
+        print(warn("No state data — services not running or no traffic captured"))
+    print()
+
+    # Top devices
+    devs = load_devices()
+    if devs and devs.get("devices"):
+        print(color(BOLD, "  Devices"))
+        for ip, dev in list(devs["devices"].items())[:10]:
+            events = dev.get("traffic_events", 0)
+            host = dev.get("hostname") or ip
+            color_fn = G if events > 100 else Y if events > 0 else D
+            print(f"    {color_fn + str(events) + RESET:>5}  {host:25s}  {color(D, ip)}")
+    print()
+
+def cmd_kill(args):
+    """Kill a device's internet by ARP poisoning (blocks traffic to/from gateway)."""
+    banner()
+    ip = args.ip
+    if not ip:
+        print(err("Usage: netwatch kill <ip>"))
+        return
+    print(info(f"Killing device {ip}..."))
+    # Write kill command to a file that arpspoof reads
+    kill_file = DATA / "kill_list.json"
+    DATA.mkdir(exist_ok=True)
+    try:
+        kill_list = json.loads(kill_file.read_text()) if kill_file.exists() else []
+    except:
+        kill_list = []
+    if ip not in kill_list:
+        kill_list.append(ip)
+        kill_file.write_text(json.dumps(kill_list))
+        print(ok(f"Device {ip} added to kill list"))
+        print(info("ARP MITM will block this device on next cycle"))
+    else:
+        print(warn(f"Device {ip} already in kill list"))
+    # Also try to send immediate ARP poison via arpspoof API
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://localhost:8777/kill/{ip}", timeout=2)
+        print(ok(f"Kill signal sent to ARP MITM"))
+    except:
+        print(info("ARP MITM not running — kill will apply on next start"))
+
+def cmd_rescue(args):
+    """Restore a killed device's internet access."""
+    banner()
+    ip = args.ip
+    if not ip:
+        print(err("Usage: netwatch rescue <ip>"))
+        return
+    print(info(f"Rescuing device {ip}..."))
+    kill_file = DATA / "kill_list.json"
+    try:
+        kill_list = json.loads(kill_file.read_text()) if kill_file.exists() else []
+    except:
+        kill_list = []
+    if ip in kill_list:
+        kill_list.remove(ip)
+        kill_file.write_text(json.dumps(kill_list))
+        print(ok(f"Device {ip} removed from kill list"))
+    else:
+        print(warn(f"Device {ip} not in kill list"))
+    # Send rescue signal
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://localhost:8777/rescue/{ip}", timeout=2)
+        print(ok(f"Rescue signal sent to ARP MITM"))
+    except:
+        print(info("ARP MITM not running — rescue will apply on next start"))
+
+def cmd_devices(args):
+    """List devices with type/model detection."""
+    banner()
+    sys.path.insert(0, str(ROOT))
+    from device_detect import detect_device
+
+    devs = load_devices()
+    if not devs or not devs.get("devices"):
+        print(warn("No devices found — run `netwatch start` first"))
+        return
+
+    print(color(BOLD, f"  {'IP':16s}  {'TYPE':10s}  {'MODEL':25s}  {'VENDOR':15s}  EVENTS"))
+    print(color(D, "  " + "─" * 90))
+
+    for ip, dev in sorted(devs["devices"].items(), key=lambda x: -x[1].get("traffic_events", 0)):
+        events = dev.get("traffic_events", 0)
+        host = dev.get("hostname", "")
+        vendor = dev.get("vendor", "")
+        # Use stored device info if available, otherwise detect
+        dtype = dev.get("device_type", "")
+        dmodel = dev.get("device_model", "")
+        dicon = dev.get("device_icon", "")
+        if not dtype or dtype == "device":
+            info = detect_device(host, vendor)
+            dtype = info["type"]
+            dmodel = info["model"]
+            dicon = info["icon"]
+        ev_color = G if events > 100 else Y if events > 10 else D
+        print(f"  {ip:16s}  {dicon} {dtype:8s}  {dmodel:25s}  {vendor[:15]:15s}  {color(ev_color, str(events))}")
+    print()
+
+def cmd_domains(args):
+    """Top domains."""
+    banner()
+    state = load_state()
+    if not state:
+        print(warn("No state data"))
+        return
+
+    domains = state.get("domains", {})
+    if not domains:
+        print(warn("No domains captured yet"))
+        return
+
+    # Sort by count
+    real = {k: v for k, v in domains.items() if not k.endswith(".local") and not k.endswith(".in-addr.arpa") and not k.startswith("lb.")}
+    sorted_d = sorted(real.items(), key=lambda x: -x[1].get("count", 0))[:20]
+
+    print(color(BOLD, f"  {'COUNT':>6}  {'DOMAIN':40s}  {'KIND':12s}  DEVICES"))
+    print(color(D, "  " + "─" * 90))
+    for dom, info in sorted_d:
+        cnt = info.get("count", 0)
+        kinds = " ".join(info.get("kinds", {}).keys())
+        devs = list(info.get("devs", {}).keys())
+        dev_str = ", ".join(devs[:3])
+        if len(devs) > 3: dev_str += f" +{len(devs)-3}"
+        c = G if cnt > 100 else Y if cnt > 10 else D
+        print(f"  {color(c, str(cnt)):>6}  {dom:40s}  {kinds:12s}  {dev_str}")
+    print()
+
+def cmd_scan(args):
+    """Quick ARP scan."""
+    banner()
+    print(info(f"Scanning subnet on {os.environ.get('NETWATCH_IFACE', 'en0')}..."))
+    sys.path.insert(0, str(ROOT))
+    try:
+        import scapy.all as scapy
+        from scapy.layers.l2 import srp, Ether, ARP
+        iface = os.environ.get("NETWATCH_IFACE", "en0")
+        # Get subnet
+        r = subprocess.run(["ifconfig", iface], capture_output=True, text=True)
+        my_ip = "192.168.2.42"
+        for line in r.stdout.splitlines():
+            if "inet " in line:
+                my_ip = line.split("inet ")[1].split()[0]
+                break
+        subnet = ".".join(my_ip.split(".")[:3])
+        ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=f"{subnet}.0/24"),
+                      timeout=3, verbose=0, iface=iface)
+        from device_detect import detect_device
+        print()
+        print(color(BOLD, f"  {'IP':16s}  {'MAC':18s}  {'TYPE':10s}  MODEL"))
+        print(color(D, "  " + "─" * 80))
+        for _, rcv in ans:
+            ip = rcv[ARP].psrc
+            mac = rcv[Ether].src
+            info = detect_device("", "")  # bare
+            print(f"  {ip:16s}  {mac:18s}  {info['icon']} {info['type']:8s}  {info['model']}")
+    except ImportError:
+        print(err("scapy not installed: pip3 install scapy"))
+    except Exception as e:
+        print(err(f"Scan failed: {e}"))
+
+def cmd_tail(args):
+    """Tail live events."""
+    banner()
+    print(info("Tailing live events (Ctrl+C to stop)..."))
+    print()
+    seen = set()
+    try:
+        while True:
+            state = load_state()
+            if state:
+                events = state.get("events", [])
+                for e in events:
+                    key = (e.get("t"), e.get("dev"), e.get("host"))
+                    if key not in seen:
+                        seen.add(key)
+                        t = time.strftime("%H:%M:%S", time.localtime(e.get("t", 0)))
+                        kind = e.get("kind", "?")
+                        kind_color = {"tls": G, "dns": C, "mdns": M}.get(kind, D)
+                        print(f"  {color(D, t)}  {color(kind_color, kind.upper()):8s}  {e.get('dev', '?'):16s}  {color(B, e.get('host', ''))}")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print()
+        print(info("Stopped"))
+
+def cmd_panel(args):
+    banner()
+    start_panel()
+
+def cmd_mitm(args):
+    banner()
+    start_arpspoof()
+
+def cmd_install(args):
+    """Install to /usr/local/bin/netwatch."""
+    target = Path("/usr/local/bin/netwatch")
+    script = ROOT / "netwatch"
+    print(info(f"Installing {script} → {target}"))
+    try:
+        result = subprocess.run([
+            "osascript", "-e",
+            f'do shell script "ln -sf {script} {target} && chmod +x {script}" with administrator privileges'
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(ok(f"Installed. Run from anywhere: netwatch status"))
+        else:
+            print(err("Install failed"))
+    except Exception as e:
+        print(err(f"{e}"))
+
+def cmd_uninstall(args):
+    target = Path("/usr/local/bin/netwatch")
+    try:
+        subprocess.run([
+            "osascript", "-e",
+            f'do shell script "rm -f {target}" with administrator privileges'
+        ], check=False)
+        print(ok("Uninstalled"))
+    except: pass
+
+# ─── Main ───────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser(prog="netwatch", description="netwatch CLI", add_help=False)
+    parser.add_argument("command", nargs="?", default="help",
+                        choices=["start", "stop", "status", "devices", "domains",
+                                 "scan", "tail", "panel", "mitm", "kill", "rescue",
+                                 "install", "uninstall", "help"])
+    parser.add_argument("ip", nargs="?", default=None)
+    parser.add_argument("--no-banner", action="store_true")
+    parser.add_argument("-h", "--help", action="store_true")
+    args = parser.parse_args()
+
+    if args.help or args.command == "help":
+        banner()
+        print(color(BOLD, "  USAGE"))
+        print(f"    {color(C, 'netwatch')} {color(G, '<command>')}")
+        print()
+        print(color(BOLD, "  COMMANDS"))
+        commands = [
+            ("start", "Start MITM + panel (recommended first run)"),
+            ("stop", "Stop all services"),
+            ("status", "Show live status, devices, counts"),
+            ("devices", "List devices with detected type/model"),
+            ("domains", "Top domains being accessed"),
+            ("scan", "Quick ARP scan of subnet"),
+            ("tail", "Tail live events stream"),
+            ("panel", "Start only the web panel"),
+            ("mitm", "Start only ARP MITM (sudo)"),
+            ("kill <ip>", "Kill device internet (ARP poison)"),
+            ("rescue <ip>", "Restore killed device"),
+            ("install", "Install to /usr/local/bin"),
+            ("uninstall", "Remove from PATH"),
+        ]
+        for cmd, desc in commands:
+            print(f"    {color(G, cmd):12s}  {desc}")
+        print()
+        print(color(D, "  Docs: https://github.com/yunior123/netwatch"))
+        return
+
+    cmds = {
+        "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
+        "devices": cmd_devices, "domains": cmd_domains, "scan": cmd_scan,
+        "tail": cmd_tail, "panel": cmd_panel, "mitm": cmd_mitm,
+        "kill": cmd_kill, "rescue": cmd_rescue,
+        "install": cmd_install, "uninstall": cmd_uninstall,
+    }
+    cmds[args.command](args)
+
+if __name__ == "__main__":
+    main()
