@@ -314,6 +314,16 @@ def add_event(src_ip, kind, host):
             "online": True, "traffic_events": 0, "domains": {}, "protocols": defaultdict(int),
             "services": defaultdict(int), "urls": [],
         })
+        # If device is new (no MAC), look up from ARP table
+        if not dev.get("mac"):
+            arp = get_arp_table()
+            entry = arp.get(src_ip, {})
+            if entry.get("mac"):
+                dev["mac"] = entry["mac"]
+                if HAS_OUI and not dev.get("vendor"):
+                    dev["vendor"] = lookup_vendor(entry["mac"])
+            if entry.get("hostname") and not dev.get("hostname"):
+                dev["hostname"] = entry["hostname"]
         dev["traffic_events"] += 1
         dev["last_seen"] = time.time()
         dev["online"] = True
