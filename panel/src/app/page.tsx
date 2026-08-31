@@ -10,6 +10,10 @@ import CaptureManager from "@/components/CaptureManager";
 import ProtocolChart from "@/components/ProtocolChart";
 import TopTalkers from "@/components/TopTalkers";
 import SecurityAlerts from "@/components/SecurityAlerts";
+import TopologyMap from "@/components/TopologyMap";
+import TrafficTimeline from "@/components/TrafficTimeline";
+import GeoMap from "@/components/GeoMap";
+import SankeyFlow from "@/components/SankeyFlow";
 import { TrafficState, DevicesState, MergedDevice } from "@/lib/types";
 
 const POLL_MS = parseInt(process.env.NEXT_PUBLIC_POLL_MS || "2000", 10);
@@ -153,6 +157,18 @@ export default function Home() {
         {/* TAB: Live Traffic */}
         {tab === "live" && (
           <div className="space-y-4">
+            {/* Topology + Timeline */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="lg:col-span-2">
+                <TopologyMap devices={merged} events={events} />
+              </div>
+              <GeoMap events={events} domains={traffic?.domains || {}} />
+            </div>
+            {/* Timeline + Sankey */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <TrafficTimeline events={events} />
+              <SankeyFlow events={events} devices={traffic?.devices || {}} />
+            </div>
             {/* Stats row */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <ProtocolChart events={events} domains={traffic?.domains || {}} />
@@ -162,7 +178,7 @@ export default function Home() {
             {/* Events + Domains */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <ActivityFeed events={events} filter={filter} />
-              <TopDomains domains={traffic?.domains || {}} filter={filter} />
+              <TopDomains domains={traffic?.domains || {}} filter={filter} devices={merged} />
             </div>
           </div>
         )}
@@ -202,44 +218,56 @@ export default function Home() {
             {selectedDevice && (() => {
               const dev = merged.find((d) => d.ip === selectedDevice);
               if (!dev) return null;
+              const level = dev.activity_level;
+              const levelColor = level === "high" ? "text-emerald-400" : level === "medium" ? "text-amber-400" : level === "low" ? "text-slate-400" : "text-slate-600";
               return (
                 <section className="rounded-lg border border-cyan-800/30 bg-cyan-950/10 p-4">
                   <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
-                      Device Detail: {dev.hostname || dev.ip}
-                    </h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-sm font-semibold text-cyan-400">
+                        {dev.hostname || "Unknown Device"}
+                      </h3>
+                      {dev.vendor && <span className="text-xs text-cyan-400/60">{dev.vendor}</span>}
+                      <span className={`text-xs font-medium ${levelColor}`}>{level.toUpperCase()}</span>
+                    </div>
                     <button onClick={() => setSelectedDevice(null)} className="text-xs text-slate-500 hover:text-slate-300">Close</button>
                   </div>
-                  <div className="mb-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                    <Detail label="IP" value={dev.ip} />
-                    <Detail label="MAC" value={dev.mac || "—"} />
+                  <div className="mb-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-5">
+                    <Detail label="IP Address" value={dev.ip} />
+                    <Detail label="MAC Address" value={dev.mac || "—"} />
                     <Detail label="Hostname" value={dev.hostname || "—"} />
+                    <Detail label="Vendor" value={dev.vendor || "—"} />
                     <Detail label="Interface" value={dev.interface || "—"} />
                     <Detail label="Traffic Events" value={dev.traffic_events.toLocaleString()} />
-                    <Detail label="Domains" value={Object.keys(dev.domains).length.toLocaleString()} />
+                    <Detail label="Unique Domains" value={Object.keys(dev.domains).length.toLocaleString()} />
                     <Detail label="First Seen" value={new Date(dev.first_seen * 1000).toLocaleString()} />
                     <Detail label="Last Seen" value={new Date(dev.last_seen * 1000).toLocaleString()} />
+                    <Detail label="Status" value={dev.online ? "Online" : "Offline"} />
                   </div>
                   {Object.keys(dev.protocols || {}).length > 0 && (
-                    <div className="mb-3 flex gap-2">
-                      {Object.entries(dev.protocols).map(([k, n]) => (
-                        <span key={k} className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${
-                          k === "dns" ? "bg-blue-950 text-blue-300" :
-                          k === "tls" ? "bg-emerald-950 text-emerald-300" :
-                          "bg-pink-950 text-pink-300"
-                        }`}>
-                          {k}: {n}
-                        </span>
-                      ))}
+                    <div className="mb-3">
+                      <div className="mb-1 text-[10px] text-slate-500">Protocols:</div>
+                      <div className="flex gap-2">
+                        {Object.entries(dev.protocols).sort(([,a],[,b]) => b-a).map(([k, n]) => (
+                          <span key={k} className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${
+                            k === "dns" ? "bg-blue-950 text-blue-300" :
+                            k === "tls" ? "bg-emerald-950 text-emerald-300" :
+                            k === "mdns" ? "bg-pink-950 text-pink-300" :
+                            "bg-slate-800 text-slate-400"
+                          }`}>
+                            {k}: {n}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                   {Object.keys(dev.domains).length > 0 && (
                     <div>
-                      <div className="mb-1 text-[10px] text-slate-500">Domains contacted:</div>
+                      <div className="mb-1 text-[10px] text-slate-500">Domains contacted ({Object.keys(dev.domains).length}):</div>
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(dev.domains).sort(([, a], [, b]) => b - a).map(([domain, count]) => (
                           <span key={domain} className="inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                            {domain} ({count})
+                            {domain} <span className="text-slate-600">({count})</span>
                           </span>
                         ))}
                       </div>

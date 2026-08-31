@@ -197,4 +197,16 @@ def selftest():
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest(); sys.exit(0)
-    run(sys.argv[1] if len(sys.argv) > 1 else "en0")
+    import subprocess as _sp
+    iface = sys.argv[1] if len(sys.argv) > 1 else "en0"
+    # --live mode: start tcpdump ourselves writing to capture.pcap, then tail it
+    if "--live" in sys.argv:
+        rm_old = _sp.Popen(["rm", "-f", PCAP])
+        rm_old.wait()
+        _sp.Popen([
+            "tcpdump", "-i", iface, "-U", "-s", "128", "-n", "-w", PCAP,
+            "port", "53", "or", "port", "443", "or", "port", "5353", "or", "port", "67", "or", "port", "68"
+        ], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        import signal; signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+        print(f"parser: live capture started on {iface}", file=sys.stderr)
+    run(iface)
