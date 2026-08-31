@@ -21,6 +21,12 @@ async function listCaptures() {
       const st = await stat(join(CAPTURES_DIR, f));
       captures.push({ name: f, size: st.size, mtime: Math.floor(st.mtimeMs / 1000) });
     }
+    // Also check for MITM capture.pcap in data root
+    const mitmCapture = join(DATA_DIR, "capture.pcap");
+    try {
+      const st = await stat(mitmCapture);
+      captures.push({ name: "capture.pcap", size: st.size, mtime: Math.floor(st.mtimeMs / 1000), path: mitmCapture });
+    } catch {}
     return captures.sort((a, b) => b.mtime - a.mtime);
   } catch {
     return [];

@@ -10,6 +10,7 @@ OUI_DB: dict[str, str] = {
     "14:7D:DA": "Apple", "6C:96:CF": "Apple", "B0:BE:76": "Apple",
     "38:F9:D7": "Apple", "8C:85:90": "Apple", "A0:99:9B": "Apple",
     "0C:30:21": "Apple", "78:7B:8A": "Apple", "AC:DE:48": "Apple",
+    "5C:AD:BA": "Apple",  # Apple private WiFi address
     # Samsung
     "3E:61:2D": "Samsung", "7A:D8:98": "Samsung", "8A:6D:1C": "Samsung",
     "BE:38:17": "Samsung", "22:03:8E": "Samsung", "00:1E:58": "Samsung",
@@ -73,6 +74,8 @@ OUI_DB: dict[str, str] = {
     # Printer brands
     "00:1B:A8": "Brother", "00:1E:8F": "Epson", "00:26:AB": "Canon",
     "18:60:24": "HP-Print", "30:CD:A7": "HP-Print",
+    "8C:8B:5B": "Brother",  # Brother printers
+    "B0:68:E6": "Brother",  # Brother printers
     # IoT / Smart Home
     "B4:E6:2D": "Espressif", "EC:FA:BC": "Tuya", "18:B7:35": "Tuya",
     "50:02:91": "Raspberry-Pi", "28:CD:C1": "Raspberry-Pi",

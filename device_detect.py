@@ -277,7 +277,6 @@ def detect_device(hostname: str = "", vendor: str = "", mdns_services: list = No
     # 5. Printers
     if any(s in str(mdns_services) for s in ["_printer", "_ipp", "_ipps", "_pdl", "_scanner"]):
         if "hp" in v or "hewlett" in v or "hp" in h:
-            # Try to find model in hostname or use generic
             for model in HP_PRINTER_MODELS:
                 if model.lower().replace(" ", "") in h.replace(" ", ""):
                     return _res("printer", model, "🖨️", "printer")
@@ -289,6 +288,9 @@ def detect_device(hostname: str = "", vendor: str = "", mdns_services: list = No
         if "canon" in v or "canon" in h:
             return _res("printer", "Canon Printer", "🖨️", "printer")
         return _res("printer", "Network Printer", "🖨️", "printer")
+    # Brother printer from hostname
+    if "brother" in h or "hl-l" in h or "mfc-" in h:
+        return _res("printer", "Brother Printer", "🖨️", "printer")
 
     # 6. TVs (Sony, LG, Vizio, TCL, Hisense)
     for pat, tmpl, cat in TV_BRANDS:
@@ -317,6 +319,9 @@ def detect_device(hostname: str = "", vendor: str = "", mdns_services: list = No
 
     # 10. Fallback by vendor
     if v:
+        # Samsung with private MAC = phone
+        if "samsung" in v:
+            return _res("phone", "Samsung Phone", "📱", "phone")
         return _res("device", v.title(), _icon_for_vendor(v), "device")
 
     return _res("device", "Unknown Device", "📡", "device")

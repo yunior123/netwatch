@@ -232,7 +232,7 @@ export default function Home() {
             </div>
             {/* Events + Domains */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <ActivityFeed events={events} filter={filter} />
+              <ActivityFeed events={events} filter={filter} devices={merged} />
               <TopDomains domains={traffic?.domains || {}} filter={filter} devices={merged} />
             </div>
           </div>
