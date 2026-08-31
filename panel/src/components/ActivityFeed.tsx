@@ -7,6 +7,20 @@ function fmtTime(t: number): string {
   return new Date(t * 1000).toTimeString().slice(0, 8);
 }
 
+function formatDomain(domain: string): string {
+  let d = domain.replace(/\.$/, "");
+  if (d.endsWith(".local")) return d;
+  if (d.endsWith(".in-addr.arpa")) {
+    const parts = d.replace(".in-addr.arpa", "").split(".").reverse();
+    return parts.join(".");
+  }
+  if (d.startsWith("_") && d.includes("._")) {
+    const match = d.match(/_([^._]+\.[^._]+)\.local/);
+    if (match) return match[1] + ".local";
+  }
+  return d;
+}
+
 function kindStyle(kind: string): string {
   switch (kind) {
     case "dns": return "bg-blue-950 text-blue-300 border border-blue-900/50";
@@ -73,7 +87,7 @@ export default function ActivityFeed({ events, filter }: ActivityFeedProps) {
                   </span>
                 </td>
                 <td className="max-w-[200px] truncate px-3 py-1 font-medium text-cyan-300">
-                  {e.host}
+                  {formatDomain(e.host)}
                 </td>
                 <td className="max-w-[120px] truncate px-3 py-1 text-slate-400">
                   {e.dev}
