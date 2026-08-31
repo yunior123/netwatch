@@ -97,8 +97,9 @@ def get_my_ip():
     return "192.168.2.42"
 
 def get_arp_table():
-    """Parse ARP table to get IP→MAC mappings.
+    """Parse ARP table to get IP→MAC mappings and hostnames.
     Format: hostname (IP) at MAC on en0 ifscope [ethernet]
+    Returns: dict of {ip: {"mac": mac, "hostname": hostname}}
     """
     import subprocess
     r = subprocess.run(["arp", "-a", "-i", IFACE], capture_output=True, text=True)
@@ -112,8 +113,10 @@ def get_arp_table():
                 # parts[i-1] = (IP), parts[i+1] = MAC
                 ip_part = parts[i - 1].strip("()")
                 mac_part = parts[i + 1].strip("()")
+                # Hostname is the first field before (IP)
+                hostname = parts[0] if i > 1 else ""
                 if ip_part and mac_part and mac_part != "(incomplete)" and "." in ip_part:
-                    table[ip_part] = mac_part
+                    table[ip_part] = {"mac": mac_part, "hostname": hostname}
     return table
 
 def discover_hosts():
@@ -545,9 +548,10 @@ def main():
     
     # Discover hosts
     hosts = discover_hosts()
+    arp_info = get_arp_table()  # {ip: {"mac": mac, "hostname": hostname}}
     if not hosts:
         print("[!] No hosts found, using ARP table")
-        hosts = get_arp_table()
+        hosts = {ip: info["mac"] for ip, info in arp_info.items()}
     
     # Filter out our own IP
     hosts = {ip: mac for ip, mac in hosts.items() if ip != my_ip}
@@ -556,10 +560,17 @@ def main():
     # Add discovered hosts to state with vendor/type/model
     for ip, mac in hosts.items():
         vendor = lookup_vendor(mac) if HAS_OUI else ""
-        info = detect_device("", vendor) if HAS_DEVICE_DETECT else {"type": "device", "model": "Unknown", "icon": "📡"}
+        # Get hostname from ARP table (e.g. "thermostat", "firestick-xxx", "s24-de-erasmo")
+        arp_entry = arp_info.get(ip, {})
+        hostname = arp_entry.get("hostname", "")
+        # Detect device from hostname + vendor
+        if HAS_DEVICE_DETECT:
+            info = detect_device(hostname, vendor)
+        else:
+            info = {"type": "device", "model": "Unknown", "icon": "📡"}
         with state_lock:
             dev = state["devices"].get(ip, {
-                "ip": ip, "mac": mac, "vendor": vendor, "hostname": "",
+                "ip": ip, "mac": mac, "vendor": vendor, "hostname": hostname,
                 "device_type": info["type"], "device_model": info["model"],
                 "device_icon": info["icon"],
                 "interface": IFACE, "first_seen": time.time(), "last_seen": time.time(),
@@ -567,7 +578,11 @@ def main():
             })
             dev["mac"] = mac
             dev["vendor"] = vendor
-            if not dev.get("device_type") or dev["device_type"] == "device":
+            if hostname and not dev.get("hostname"):
+                dev["hostname"] = hostname
+            # Always re-detect if we have new hostname info
+            if HAS_DEVICE_DETECT:
+                info = detect_device(dev.get("hostname", ""), vendor)
                 dev["device_type"] = info["type"]
                 dev["device_model"] = info["model"]
                 dev["device_icon"] = info["icon"]
@@ -576,7 +591,8 @@ def main():
 
     # Get gateway MAC
     arp_table = get_arp_table()
-    gateway_mac = arp_table.get(gateway_ip)
+    gateway_entry = arp_table.get(gateway_ip)
+    gateway_mac = gateway_entry["mac"] if isinstance(gateway_entry, dict) else gateway_entry
     if not gateway_mac:
         print(f"[!] Cannot find gateway MAC for {gateway_ip}")
         # Try to get it via ARP request
