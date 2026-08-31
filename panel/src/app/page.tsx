@@ -21,29 +21,87 @@ import { MergedDevice } from "@/lib/types";
 const POLL_MS = parseInt(process.env.NEXT_PUBLIC_POLL_MS || "2000", 10);
 type Tab = "live" | "wifi" | "devices";
 
+function getDeviceType(dev: MergedDevice): { icon: string; label: string } {
+  const h = (dev.hostname || "").toLowerCase();
+  const v = (dev.vendor || "").toLowerCase();
+  const p = dev.protocols || {};
+  const hasMdns = (p.mdns || 0) > 0;
+  const hasTls = (p.tls || 0) > 0;
+  const domainList = Object.keys(dev.domains || {});
+  const hasChromecast = domainList.some(d => d.includes("googlecast"));
+
+  if (dev.ip === "192.168.2.1") return { icon: "🌐", label: "Router" };
+  if (h.includes("iphone") || h.includes("ipad")) return { icon: "📱", label: "iOS Device" };
+  if (h.includes("macbook") || h.includes("mac")) return { icon: "💻", label: "MacBook" };
+  if (h.includes("apple-tv") || h.includes("appletv")) return { icon: "📺", label: "Apple TV" };
+  if (h.includes("homepod")) return { icon: "🔊", label: "HomePod" };
+  if (hasChromecast) return { icon: "📺", label: "Chromecast" };
+  if (v.includes("samsung")) return { icon: "📱", label: "Samsung Device" };
+  if (v.includes("sonos")) return { icon: "🔊", label: "Sonos" };
+  if (v.includes("ring") || v.includes("nest")) return { icon: "📷", label: "Smart Camera" };
+  if (v.includes("ubiquiti") || v.includes("cisco") || v.includes("netgear")) return { icon: "🌐", label: "Network Device" };
+  if (hasTls && !hasMdns) return { icon: "💻", label: "Device (active)" };
+  if (hasMdns) return { icon: "📡", label: "Smart Device" };
+  return { icon: "📡", label: "Device" };
+}
+
+function formatDomain(domain: string): string {
+  // Strip trailing dots, .local, etc.
+  let d = domain.replace(/\.$/, "");
+  if (d.endsWith(".local")) return d;
+  // For reverse DNS, show cleaned up
+  if (d.endsWith(".in-addr.arpa")) {
+    const parts = d.replace(".in-addr.arpa", "").split(".").reverse();
+    return parts.join(".");
+  }
+  // For mDNS sub-services, show the parent service
+  if (d.startsWith("_") && d.includes("._")) {
+    const match = d.match(/_([^._]+\.[^._]+)\.local/);
+    if (match) return match[1] + ".local";
+  }
+  return d;
+}
+
 function mergeDevices(traffic: ReturnType<typeof useLiveData>["traffic"], discovered: ReturnType<typeof useLiveData>["devices"]): MergedDevice[] {
   const map = new Map<string, MergedDevice>();
 
+  // Start with discovered devices (full info from devices.json)
   if (discovered?.devices) {
     for (const [ip, dev] of Object.entries(discovered.devices)) {
-      map.set(ip, { ...dev, activity_level: "idle" });
+      map.set(ip, {
+        ip: dev.ip || ip,
+        mac: dev.mac || "",
+        vendor: dev.vendor || "",
+        hostname: dev.hostname || "",
+        interface: dev.interface || "",
+        first_seen: dev.first_seen || 0,
+        last_seen: dev.last_seen || 0,
+        online: dev.online ?? true,
+        traffic_events: dev.traffic_events || 0,
+        domains: dev.domains || {},
+        protocols: dev.protocols || {},
+        activity_level: "idle",
+      });
     }
   }
 
+  // Merge traffic data (from SSE/state.json)
   if (traffic?.devices) {
     for (const [ip, td] of Object.entries(traffic.devices)) {
       const existing = map.get(ip);
       if (existing) {
-        existing.traffic_events = td.count;
-        existing.domains = td.domains || {};
-        existing.last_seen = Math.max(existing.last_seen, td.last);
-        existing.first_seen = Math.min(existing.first_seen, td.first);
-        if (td.count > 0) existing.online = true;
+        existing.traffic_events = Math.max(existing.traffic_events, td.count || 0);
+        existing.domains = td.domains || existing.domains;
+        if (td.last) existing.last_seen = Math.max(existing.last_seen, td.last);
+        if (td.first) existing.first_seen = Math.min(existing.first_seen || td.first, td.first);
+        if ((td.count || 0) > 0) existing.online = true;
+        if (td.protocols) existing.protocols = td.protocols;
       } else {
         map.set(ip, {
           ip, mac: "", vendor: "", hostname: "", interface: traffic.iface || "",
-          first_seen: td.first, last_seen: td.last, online: true,
-          traffic_events: td.count, domains: td.domains || {}, protocols: {},
+          first_seen: td.first || 0, last_seen: td.last || 0, online: true,
+          traffic_events: td.count || 0, domains: td.domains || {},
+          protocols: td.protocols || {},
           activity_level: "idle",
         });
       }
@@ -209,14 +267,23 @@ export default function Home() {
               if (!dev) return null;
               const level = dev.activity_level;
               const levelColor = level === "high" ? "text-emerald-400" : level === "medium" ? "text-amber-400" : level === "low" ? "text-slate-400" : "text-slate-600";
+              const deviceType = getDeviceType(dev);
+              const domains = Object.entries(dev.domains || {}).sort(([,a],[,b]) => b - a);
               return (
                 <section className="rounded-lg border border-cyan-800/30 bg-cyan-950/10 p-4">
                   <div className="mb-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <h3 className="text-sm font-semibold text-cyan-400">
-                        {dev.hostname || "Unknown Device"}
-                      </h3>
-                      {dev.vendor && <span className="text-xs text-cyan-400/60">{dev.vendor}</span>}
+                      <span className="text-xl">{deviceType.icon}</span>
+                      <div>
+                        <h3 className="text-sm font-semibold text-cyan-400">
+                          {dev.hostname || dev.ip}
+                        </h3>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <span>{deviceType.label}</span>
+                          {dev.vendor && <span>·</span>}
+                          {dev.vendor && <span className="text-cyan-400/60">{dev.vendor}</span>}
+                        </div>
+                      </div>
                       <span className={`text-xs font-medium ${levelColor}`}>{level.toUpperCase()}</span>
                     </div>
                     <button onClick={() => setSelectedDevice(null)} className="text-xs text-slate-500 hover:text-slate-300">Close</button>
@@ -228,9 +295,9 @@ export default function Home() {
                     <Detail label="Vendor" value={dev.vendor || "—"} />
                     <Detail label="Interface" value={dev.interface || "—"} />
                     <Detail label="Traffic Events" value={dev.traffic_events.toLocaleString()} />
-                    <Detail label="Unique Domains" value={Object.keys(dev.domains).length.toLocaleString()} />
-                    <Detail label="First Seen" value={new Date(dev.first_seen * 1000).toLocaleString()} />
-                    <Detail label="Last Seen" value={new Date(dev.last_seen * 1000).toLocaleString()} />
+                    <Detail label="Unique Domains" value={domains.length.toLocaleString()} />
+                    <Detail label="First Seen" value={dev.first_seen ? new Date(dev.first_seen * 1000).toLocaleString() : "—"} />
+                    <Detail label="Last Seen" value={dev.last_seen ? new Date(dev.last_seen * 1000).toLocaleString() : "—"} />
                     <Detail label="Status" value={dev.online ? "Online" : "Offline"} />
                   </div>
                   {Object.keys(dev.protocols || {}).length > 0 && (
@@ -250,14 +317,15 @@ export default function Home() {
                       </div>
                     </div>
                   )}
-                  {Object.keys(dev.domains).length > 0 && (
+                  {domains.length > 0 && (
                     <div>
-                      <div className="mb-1 text-[10px] text-slate-500">Domains contacted ({Object.keys(dev.domains).length}):</div>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(dev.domains).sort(([, a], [, b]) => b - a).map(([domain, count]) => (
-                          <span key={domain} className="inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                            {domain} <span className="text-slate-600">({count})</span>
-                          </span>
+                      <div className="mb-1 text-[10px] text-slate-500">Browsing History ({domains.length} domains):</div>
+                      <div className="max-h-[200px] overflow-y-auto space-y-1">
+                        {domains.map(([domain, count]) => (
+                          <div key={domain} className="flex items-center justify-between rounded bg-slate-800/50 px-2 py-1">
+                            <span className="font-mono text-[11px] text-slate-300 truncate">{formatDomain(domain)}</span>
+                            <span className="text-[10px] text-slate-500 shrink-0 ml-2">{count}×</span>
+                          </div>
                         ))}
                       </div>
                     </div>

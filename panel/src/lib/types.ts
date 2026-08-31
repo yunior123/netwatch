@@ -19,6 +19,7 @@ export interface TrafficDevice {
   last: number;
   n_domains: number;
   domains: Record<string, number>;
+  protocols: Record<string, number>;
 }
 
 export interface TrafficState {

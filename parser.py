@@ -201,10 +201,11 @@ if __name__ == "__main__":
     iface = sys.argv[1] if len(sys.argv) > 1 else "en0"
     # --live mode: start tcpdump ourselves writing to capture.pcap, then tail it
     if "--live" in sys.argv:
-        rm_old = _sp.Popen(["rm", "-f", PCAP])
-        rm_old.wait()
+        if not os.path.exists(PCAP):
+            rm_old = _sp.Popen(["rm", "-f", PCAP])
+            rm_old.wait()
         _sp.Popen([
-            "tcpdump", "-i", iface, "-U", "-s", "128", "-n", "-w", PCAP,
+            "tcpdump", "-i", iface, "-U", "-s", "512", "-n", "-w", PCAP,
             "port", "53", "or", "port", "443", "or", "port", "5353", "or", "port", "67", "or", "port", "68"
         ], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
         import signal; signal.signal(signal.SIGCHLD, signal.SIG_IGN)
