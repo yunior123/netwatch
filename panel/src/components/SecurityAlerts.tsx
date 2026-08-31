@@ -33,7 +33,7 @@ function severityIcon(s: string): string {
 
 interface SecurityAlertsProps {
   events: Array<{ t: number; dev: string; kind: string; host: string }>;
-  devices: Record<string, { count: number; protocols: Record<string, number> }>;
+  devices: Record<string, { count: number; protocols?: Record<string, number> }>;
 }
 
 export default function SecurityAlerts({ events, devices }: SecurityAlertsProps) {

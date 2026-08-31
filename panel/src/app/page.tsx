@@ -14,12 +14,14 @@ import TopologyMap from "@/components/TopologyMap";
 import TrafficTimeline from "@/components/TrafficTimeline";
 import GeoMap from "@/components/GeoMap";
 import SankeyFlow from "@/components/SankeyFlow";
-import { TrafficState, DevicesState, MergedDevice } from "@/lib/types";
+import WorldMap from "@/components/WorldMap";
+import { useLiveData } from "@/lib/useLiveData";
+import { MergedDevice } from "@/lib/types";
 
 const POLL_MS = parseInt(process.env.NEXT_PUBLIC_POLL_MS || "2000", 10);
 type Tab = "live" | "wifi" | "devices";
 
-function mergeDevices(traffic: TrafficState | null, discovered: DevicesState | null): MergedDevice[] {
+function mergeDevices(traffic: ReturnType<typeof useLiveData>["traffic"], discovered: ReturnType<typeof useLiveData>["devices"]): MergedDevice[] {
   const map = new Map<string, MergedDevice>();
 
   if (discovered?.devices) {
@@ -39,7 +41,7 @@ function mergeDevices(traffic: TrafficState | null, discovered: DevicesState | n
         if (td.count > 0) existing.online = true;
       } else {
         map.set(ip, {
-          ip, mac: "", hostname: "", interface: traffic.iface || "",
+          ip, mac: "", vendor: "", hostname: "", interface: traffic.iface || "",
           first_seen: td.first, last_seen: td.last, online: true,
           traffic_events: td.count, domains: td.domains || {}, protocols: {},
           activity_level: "idle",
@@ -62,41 +64,30 @@ function mergeDevices(traffic: TrafficState | null, discovered: DevicesState | n
 }
 
 export default function Home() {
-  const [traffic, setTraffic] = useState<TrafficState | null>(null);
-  const [devices, setDevices] = useState<DevicesState | null>(null);
-  const [connected, setConnected] = useState(false);
+  const { traffic, devices: discovered, connected } = useLiveData(POLL_MS);
   const [filter, setFilter] = useState("");
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("live");
   const [captures, setCaptures] = useState<{ name: string; size: number; mtime: number }[]>([]);
   const [selectedCapture, setSelectedCapture] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [tRes, dRes, cRes] = await Promise.all([
-        fetch("/api/state", { cache: "no-store" }),
-        fetch("/api/devices", { cache: "no-store" }),
-        fetch("/api/captures", { cache: "no-store" }),
-      ]);
-      if (tRes.ok) setTraffic(await tRes.json());
-      if (dRes.ok) setDevices(await dRes.json());
-      if (cRes.ok) {
-        const d = await cRes.json();
-        setCaptures(d.captures || []);
-      }
-      setConnected(true);
-    } catch {
-      setConnected(false);
-    }
+  // Fetch captures separately
+  useEffect(() => {
+    const fetchCaptures = async () => {
+      try {
+        const res = await fetch("/api/captures", { cache: "no-store" });
+        if (res.ok) {
+          const d = await res.json();
+          setCaptures(d.captures || []);
+        }
+      } catch {}
+    };
+    fetchCaptures();
+    const id = setInterval(fetchCaptures, 5000);
+    return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const id = setInterval(fetchData, POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchData]);
-
-  const merged = mergeDevices(traffic, devices);
+  const merged = mergeDevices(traffic, discovered);
   const onlineCount = merged.filter((d) => d.online).length;
   const events = traffic?.events || [];
 
@@ -109,12 +100,12 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#0a0c10] text-slate-200">
       <Header
-        iface={traffic?.iface || devices?.iface || "—"}
+        iface={traffic?.iface || discovered?.iface || "—"}
         packets={traffic?.packets || 0}
         domainCount={Object.keys(traffic?.domains || {}).length}
         deviceCount={merged.length}
         onlineCount={onlineCount}
-        updated={traffic?.updated || devices?.updated || 0}
+        updated={traffic?.updated || discovered?.updated || 0}
         connected={connected}
       />
 
@@ -157,12 +148,10 @@ export default function Home() {
         {/* TAB: Live Traffic */}
         {tab === "live" && (
           <div className="space-y-4">
-            {/* Topology + Timeline */}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <div className="lg:col-span-2">
-                <TopologyMap devices={merged} events={events} />
-              </div>
-              <GeoMap events={events} domains={traffic?.domains || {}} />
+            {/* Topology + Map */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <TopologyMap devices={merged} events={events} />
+              <WorldMap domains={traffic?.domains || {}} />
             </div>
             {/* Timeline + Sankey */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -188,7 +177,7 @@ export default function Home() {
           <div className="space-y-4">
             <CaptureManager
               captures={captures}
-              onRefresh={fetchData}
+              onRefresh={() => {}}
               onSelect={(name) => setSelectedCapture(selectedCapture === name ? null : name)}
               selected={selectedCapture}
             />

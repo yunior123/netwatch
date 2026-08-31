@@ -12,7 +12,7 @@ interface FlowEntry {
 
 interface SankeyFlowProps {
   events: Array<{ dev: string; host: string; kind: string }>;
-  devices: Record<string, { count: number; domains: Record<string, number> }>;
+  devices: Record<string, { count: number; domains?: Record<string, number>; n_domains?: number }>;
 }
 
 export default function SankeyFlow({ events, devices }: SankeyFlowProps) {

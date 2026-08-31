@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 panel/node_modules/
 panel/.next/
+realtime_server.py
