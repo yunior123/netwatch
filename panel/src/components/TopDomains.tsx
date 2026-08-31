@@ -3,6 +3,20 @@
 import { useMemo, useState } from "react";
 import { MergedDevice } from "@/lib/types";
 
+function formatDomain(domain: string): string {
+  let d = domain.replace(/\.$/, "");
+  if (d.endsWith(".local")) return d;
+  if (d.endsWith(".in-addr.arpa")) {
+    const parts = d.replace(".in-addr.arpa", "").split(".").reverse();
+    return parts.join(".");
+  }
+  if (d.startsWith("_") && d.includes("._")) {
+    const match = d.match(/_([^._]+\.[^._]+)\.local/);
+    if (match) return match[1] + ".local";
+  }
+  return d;
+}
+
 interface DomainEntry {
   domain: string;
   count: number;
@@ -104,7 +118,7 @@ export default function TopDomains({ domains, filter, devices }: TopDomainsProps
               >
                 <div className="min-w-0 flex-1">
                   {/* Domain name */}
-                  <div className="text-sm font-medium text-slate-200 truncate">{entry.domain}</div>
+                  <div className="text-sm font-medium text-slate-200 truncate">{formatDomain(entry.domain)}</div>
                   {/* Badges + device names inline */}
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     {Object.entries(entry.kinds).map(([k, n]) => (
@@ -140,7 +154,7 @@ export default function TopDomains({ domains, filter, devices }: TopDomainsProps
               {isExpanded && deviceList.length > 0 && (
                 <div className="mx-2 mb-2 rounded border border-slate-700 bg-slate-900/80 px-3 py-2">
                   <div className="text-[10px] font-semibold uppercase text-slate-500 mb-1.5">
-                    Devices accessing {entry.domain}
+                    Devices accessing {formatDomain(entry.domain)}
                   </div>
                   <div className="space-y-1.5">
                     {deviceList.map((d) => (
