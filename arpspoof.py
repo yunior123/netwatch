@@ -97,7 +97,9 @@ def get_my_ip():
     return "192.168.2.42"
 
 def get_arp_table():
-    """Parse ARP table to get IP→MAC mappings."""
+    """Parse ARP table to get IP→MAC mappings.
+    Format: hostname (IP) at MAC on en0 ifscope [ethernet]
+    """
     import subprocess
     r = subprocess.run(["arp", "-a", "-i", IFACE], capture_output=True, text=True)
     table = {}
@@ -106,11 +108,12 @@ def get_arp_table():
             continue
         parts = line.split()
         for i, p in enumerate(parts):
-            if p == "at" and i > 0:
-                mac = parts[i - 1].strip("()")
-                ip = parts[i + 1].strip("()") if i + 1 < len(parts) else ""
-                if ip and mac and mac != "(incomplete)" and "." in ip:
-                    table[ip] = mac
+            if p == "at" and i > 0 and i + 1 < len(parts):
+                # parts[i-1] = (IP), parts[i+1] = MAC
+                ip_part = parts[i - 1].strip("()")
+                mac_part = parts[i + 1].strip("()")
+                if ip_part and mac_part and mac_part != "(incomplete)" and "." in ip_part:
+                    table[ip_part] = mac_part
     return table
 
 def discover_hosts():
