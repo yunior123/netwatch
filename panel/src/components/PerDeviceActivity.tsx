@@ -18,15 +18,21 @@ function formatDomain(domain: string): string {
 }
 
 function deviceIcon(dev: MergedDevice): string {
+  if (dev.device_icon && dev.device_icon !== "📡") return dev.device_icon;
   const h = (dev.hostname || "").toLowerCase();
   const v = (dev.vendor || "").toLowerCase();
-  if (dev.ip === "192.168.2.1") return "🌐";
-  if (h.includes("iphone") || h.includes("ipad")) return "📱";
+  if (h.includes("iphone") || h.includes("ipad") || h.includes("phone")) return "📱";
   if (h.includes("macbook") || h.includes("mac")) return "💻";
-  if (h.includes("apple-tv") || h.includes("appletv")) return "📺";
+  if (h.includes("apple-tv") || h.includes("appletv") || h.includes("rokutv") || h.includes("firestick")) return "📺";
   if (h.includes("homepod")) return "🔊";
+  if (h.includes("watch")) return "⌚";
+  if (h.includes("thermostat")) return "🌡️";
+  if (h.includes("camera") || h.includes("c120")) return "📷";
+  if (h.includes("tv")) return "📺";
+  if (h.includes("pixel") || h.includes("galaxy") || h.includes("s24") || h.includes("s25")) return "📱";
   if (v.includes("samsung")) return "📱";
-  if (v.includes("google")) return "📱";
+  if (v.includes("apple")) return "🍎";
+  if (dev.ip === "192.168.2.1" || h.includes("router") || h.includes("gateway")) return "🌐";
   return "📡";
 }
 
@@ -67,8 +73,8 @@ export default function PerDeviceActivity({ devices, domains }: PerDeviceActivit
               <span className="text-lg">{deviceIcon(dev)}</span>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-100 truncate">
-                  {dev.hostname || dev.ip}
-               </div>
+                  {(dev.device_model && dev.device_model !== "Unknown Device") ? dev.device_model : (dev.hostname || dev.ip)}
+                </div>
                 <div className="font-mono text-[10px] text-slate-500">{dev.ip}</div>
              </div>
               <span className="rounded bg-cyan-950 px-1.5 py-0.5 text-[10px] text-cyan-300">

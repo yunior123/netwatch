@@ -39,16 +39,22 @@ function activityLabel(level: string): string {
 }
 
 function deviceIcon(dev: MergedDevice): string {
-  const h = dev.hostname.toLowerCase();
+  // Use stored device_icon from Python detection (most accurate)
+  if (dev.device_icon && dev.device_icon !== "📡") return dev.device_icon;
+  // Fallback to hostname/vendor matching
+  const h = (dev.hostname || "").toLowerCase();
   const v = (dev.vendor || "").toLowerCase();
-  const m = dev.mac.toUpperCase();
   if (h.includes("iphone") || h.includes("ipad") || h.includes("phone")) return "📱";
-  if (h.includes("macbook") || h.includes("mac") || v.includes("apple")) return "💻";
-  if (h.includes("apple-tv") || h.includes("appletv")) return "📺";
+  if (h.includes("macbook") || h.includes("mac")) return "💻";
+  if (h.includes("apple-tv") || h.includes("appletv") || h.includes("rokutv") || h.includes("firestick")) return "📺";
   if (h.includes("homepod")) return "🔊";
   if (h.includes("watch")) return "⌚";
+  if (h.includes("thermostat")) return "🌡️";
+  if (h.includes("camera") || h.includes("c120")) return "📷";
   if (h.includes("tv")) return "📺";
+  if (h.includes("pixel") || h.includes("galaxy") || h.includes("iphone") || h.includes("s24") || h.includes("s25")) return "📱";
   if (v.includes("samsung")) return "📱";
+  if (v.includes("apple")) return "🍎";
   if (v.includes("google")) return "📱";
   if (v.includes("sonos")) return "🔊";
   if (v.includes("roku") || v.includes("xbox") || v.includes("playstation")) return "📺";
@@ -57,8 +63,16 @@ function deviceIcon(dev: MergedDevice): string {
   if (v.includes("printer") || v.includes("brother") || v.includes("canon") || v.includes("epson")) return "🖨️";
   if (v.includes("raspberry")) return "🥧";
   if (v.includes("docker") || v.includes("virtual")) return "🐳";
-  if (dev.ip === "192.168.2.1" || h.includes("router") || h.includes("gateway")) return "🌐";
+  if (dev.ip === "192.168.2.1" || h.includes("router") || h.includes("gateway") || h.includes("mynetwork")) return "🌐";
   return "📡";
+}
+
+function deviceName(dev: MergedDevice): string {
+  // Use device_model if available (e.g. "Samsung Galaxy A04", "Amazon Fire TV")
+  if (dev.device_model && dev.device_model !== "Unknown Device") return dev.device_model;
+  // Use hostname if it's meaningful (not a MAC or random string)
+  if (dev.hostname && !dev.hostname.match(/^[\d:a-f]{17}$/i) && dev.hostname !== "?") return dev.hostname;
+  return dev.vendor || "Unknown";
 }
 
 interface DeviceGridProps {
@@ -104,10 +118,10 @@ export default function DeviceGrid({ devices, onSelectDevice, selectedDevice }: 
                 <span className="text-lg">{deviceIcon(dev)}</span>
                 <div>
                   <div className="text-sm font-medium text-slate-100">
-                    {dev.hostname || "Unknown"}
+                    {deviceName(dev)}
                   </div>
                   <div className="font-mono text-xs text-slate-500">{dev.ip}</div>
-                  {dev.vendor && (
+                  {dev.vendor && dev.vendor !== deviceName(dev) && (
                     <div className="text-[10px] text-cyan-400/60">{dev.vendor}</div>
                   )}
                 </div>

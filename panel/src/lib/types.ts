@@ -43,6 +43,11 @@ export interface DeviceInfo {
   traffic_events: number;
   domains: Record<string, number>;
   protocols: Record<string, number>;
+  device_type?: string;
+  device_model?: string;
+  device_icon?: string;
+  services?: Record<string, number>;
+  urls?: Array<{ url: string; t: number; service?: string }>;
 }
 
 export interface DevicesState {
