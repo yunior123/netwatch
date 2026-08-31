@@ -53,61 +53,106 @@ def banner():
     print(color(D, "  https://github.com/yunior123/netwatch\n"))
 
 # ─── Service management ─────────────────────────────────────────────
+PIDFILE = DATA / "arpspoof.pid"
+PLIST = Path.home() / "Library/LaunchAgents" / "com.netwatch.arpspoof.plist"
+
 def is_running(name):
     """Check if a process is running by name."""
     r = subprocess.run(["pgrep", "-fl", name], capture_output=True, text=True)
     return bool(r.stdout.strip())
 
+def kill_all_arpspoof():
+    """Kill ALL arpspoof processes — user and root. No password dialogs."""
+    # Kill as current user first (no sudo needed)
+    subprocess.run(["pkill", "-9", "-f", "arpspoof.py"], check=False, capture_output=True)
+    # Kill root-owned via sudo -n (uses cached creds, no dialog)
+    subprocess.run(["sudo", "-n", "pkill", "-9", "-f", "arpspoof.py"], check=False, capture_output=True)
+    # Also remove stale PID file
+    if PIDFILE.exists():
+        try: PIDFILE.unlink()
+        except: pass
+
 def start_arpspoof():
-    """Start ARP MITM (needs sudo)."""
+    """Start ARP MITM via launchd (no password dialog after initial setup)."""
     if is_running("arpspoof.py"):
-        print(info("ARP MITM already running"))
-        return True
+        # Kill stale processes first — they may be running old code
+        print(warn("Found existing arpspoof — restarting with fresh code..."))
+        kill_all_arpspoof()
+        time.sleep(2)
 
     # Ensure capture dir
     DATA.mkdir(exist_ok=True)
 
-    # Build start script
-    START_SCRIPT.write_text(f"""#!/bin/bash
-cd {ROOT}
-/usr/bin/python3 -B {ARPSPOOF} >> {LOG} 2>&1
-""")
-    START_SCRIPT.chmod(0o755)
+    # Build launchd plist (runs as root, no password dialog)
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.netwatch.arpspoof</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-B</string>
+        <string>{ARPSPOOF}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{ROOT}</string>
+    <key>StandardOutPath</key>
+    <string>{LOG}</string>
+    <key>StandardErrorPath</key>
+    <string>{LOG}</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>"""
+    PLIST.write_text(plist_content)
 
-    # Launch via osascript (sudo prompt)
-    print(info("Starting ARP MITM (sudo required)..."))
+    # Load via launchctl (asks for password ONCE on first run, then cached)
+    print(info("Starting ARP MITM via launchd..."))
     try:
-        subprocess.Popen([
-            "osascript", "-e",
-            f'do shell script "{START_SCRIPT}" with administrator privileges'
-        ])
-        time.sleep(8)
+        # Unload first in case it's stale
+        subprocess.run(["launchctl", "unload", str(PLIST)], check=False, capture_output=True)
+        # Load and start
+        result = subprocess.run(
+            ["launchctl", "load", str(PLIST)],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            # Fallback: use sudo -n (cached creds)
+            print(info("launchd failed, trying sudo..."))
+            subprocess.Popen([
+                "sudo", "-n", "/usr/bin/python3", "-B", str(ARPSPOOF)
+            ], stdout=open(LOG, "a"), stderr=subprocess.STDOUT)
+        time.sleep(6)
         if is_running("arpspoof.py"):
             print(ok("ARP MITM started"))
             return True
-        print(err("ARP MITM failed to start — check /tmp/netwatch-arpspoof.log"))
+        print(err("ARP MITM failed — check /tmp/netwatch-arpspoof.log"))
         return False
     except Exception as e:
         print(err(f"Failed to start: {e}"))
         return False
 
 def stop_arpspoof():
-    """Stop ARP MITM."""
+    """Stop ARP MITM — no password dialogs."""
     if not is_running("arpspoof.py"):
         print(info("ARP MITM not running"))
         return
     print(info("Stopping ARP MITM..."))
-    subprocess.run(["pkill", "-9", "-f", "arpspoof.py"], check=False)
-    # Also kill root processes via osascript
-    try:
-        subprocess.run([
-            "osascript", "-e",
-            'do shell script "pkill -9 -f arpspoof.py 2>/dev/null" with administrator privileges'
-        ], check=False, capture_output=True)
-    except: pass
+    # Unload launchd job first (no sudo needed for user agents)
+    subprocess.run(["launchctl", "unload", str(PLIST)], check=False, capture_output=True)
+    # Kill all processes — no osascript, no password dialog
+    kill_all_arpspoof()
     time.sleep(2)
     if is_running("arpspoof.py"):
-        print(warn("Some processes survived"))
+        print(warn("Some processes survived — trying harder..."))
+        kill_all_arpspoof()
+        time.sleep(1)
+    if is_running("arpspoof.py"):
+        print(warn("Root process still alive — run: sudo pkill -9 -f arpspoof"))
     else:
         print(ok("ARP MITM stopped"))
 

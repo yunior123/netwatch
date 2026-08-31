@@ -1,12 +1,37 @@
 #!/usr/bin/env python3
 """ARP spoofing MITM — makes the macbook see ALL device traffic.
-Requires root. Run via: sudo python3 arpspoof.py or via osascript.
+Requires root. Run via: sudo python3 arpspoof.py or via launchd.
 
 Writes intercepted DNS + TLS SNI to state.json so the panel shows
 browsing from ALL devices on the network, not just the macbook.
 """
 import sys, os, time, struct, threading, signal, json
 from collections import defaultdict
+
+# ─── Prevent duplicate instances ────────────────────────────────────
+LOCKFILE = "/tmp/netwatch-arpspoof.lock"
+def acquire_lock():
+    """Exit if another instance is already running."""
+    if os.path.exists(LOCKFILE):
+        try:
+            old_pid = int(open(LOCKFILE).read().strip())
+            os.kill(old_pid, 0)  # Check if process exists
+            print(f"[!] Already running (PID {old_pid}). Kill it first or remove {LOCKFILE}")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            pass  # Stale lock, remove it
+    with open(LOCKFILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def release_lock():
+    try: os.unlink(LOCKFILE)
+    except: pass
+
+acquire_lock()
+
+# ─── ROOT must be defined BEFORE any local imports ──────────────────
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
 
 try:
     import scapy.all as scapy
@@ -19,10 +44,9 @@ try:
     get_if_hwaddr = scapy.get_if_hwaddr
 except ImportError:
     print("pip3 install scapy", file=sys.stderr)
+    release_lock()
     sys.exit(1)
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 try:
     from device_detect import detect_device
     HAS_DEVICE_DETECT = True
@@ -581,7 +605,7 @@ def main():
         print("\n[*] Shutting down...")
         spoofer.restore()
         disable_ip_forward()
-        write_state()  # Final write
+        release_lock()
         sys.exit(0)
     
     signal.signal(signal.SIGINT, cleanup)
