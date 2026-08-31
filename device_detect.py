@@ -167,6 +167,55 @@ def detect_device(hostname: str = "", vendor: str = "", mdns_services: list = No
     h = (hostname or "").lower().strip()
     v = (vendor or "").lower().strip()
 
+    # 0. Quick hostname matches (most reliable from ARP table)
+    if h in ("thermostat",):
+        return _res("thermostat", "Thermostat", "🌡️", "thermostat")
+    if h in ("watch",):
+        return _res("watch", "Smartwatch", "⌚", "watch")
+    if h in ("ipad",):
+        return _res("tablet", "iPad", "📱", "tablet")
+    if h in ("iphone",):
+        return _res("phone", "iPhone", "📱", "phone")
+    # Hostnames like "iphone-xxx", "iphonedsearturo"
+    if h.startswith("iphone"):
+        return _res("phone", "iPhone", "📱", "phone")
+    if h.startswith("ipad"):
+        return _res("tablet", "iPad", "📱", "tablet")
+    # "pixel-8", "pixel-7-pro"
+    if h.startswith("pixel"):
+        m = re.search(r"pixel[ -]?(\d+)[ -]?(pro|a)?", h)
+        if m:
+            model = f"Google Pixel {m.group(1)}"
+            if m.group(2): model += f" {m.group(2).upper()}"
+            return _res("phone", model, "📱", "phone")
+        return _res("phone", "Google Pixel", "📱", "phone")
+    # "galaxy-a04e", "galaxy-s24-ultra"
+    if h.startswith("galaxy"):
+        for pat, tmpl, cat in SAMSUNG_GALAXY:
+            m = re.search(pat, h, re.IGNORECASE)
+            if m:
+                model = tmpl.format(*[g for g in m.groups() if g])
+                return _res(cat, model, _icon_for(cat), cat)
+        return _res("phone", "Samsung Galaxy", "📱", "phone")
+    # "s24-de-erasmo" (Samsung Galaxy S24)
+    if re.match(r"^s\d+", h):
+        m = re.match(r"^s(\d+)", h)
+        if m:
+            return _res("phone", f"Samsung Galaxy S{m.group(1)}", "📱", "phone")
+    # "43hisenserokutv", "40tclrokutv" — TV brand + roku in hostname
+    if "rokutv" in h or "roku-tv" in h:
+        if "hisense" in h:
+            return _res("tv", "Hisense Roku TV", "📺", "tv")
+        if "tcl" in h:
+            return _res("tv", "TCL Roku TV", "📺", "tv")
+        return _res("tv", "Roku TV", "📺", "tv")
+    # "firestick-xxx"
+    if h.startswith("firestick") or h.startswith("fire-stick"):
+        return _res("tv", "Amazon Fire TV", "📺", "tv")
+    # "c120" — likely a Tapo camera
+    if re.match(r"^c\d+$", h):
+        return _res("camera", "Tapo Camera", "📷", "camera")
+
     # 1. Router / Gateway
     if any(k in h for k in ["router", "gateway", "mynetwork", "home"]) or v in ["tp-link", "netgear", "asus", "ubiquiti"]:
         if "mynetwork" in h or "gateway" in h:

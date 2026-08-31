@@ -17,7 +17,7 @@ Usage:
 import sys, os, time, json, argparse, subprocess, signal, shutil
 from pathlib import Path
 
-ROOT = Path(__file__).parent.resolve()
+ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 STATE = DATA / "state.json"
 DEVICES = DATA / "devices.json"
