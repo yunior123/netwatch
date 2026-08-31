@@ -1,0 +1,88 @@
+"use client";
+
+import { TrafficEvent } from "@/lib/types";
+
+function fmtTime(t: number): string {
+  if (!t) return "—";
+  return new Date(t * 1000).toTimeString().slice(0, 8);
+}
+
+function kindStyle(kind: string): string {
+  switch (kind) {
+    case "dns": return "bg-blue-950 text-blue-300 border border-blue-900/50";
+    case "tls": return "bg-emerald-950 text-emerald-300 border border-emerald-900/50";
+    case "mdns": return "bg-pink-950 text-pink-300 border border-pink-900/50";
+    default: return "bg-slate-800 text-slate-400 border border-slate-700";
+  }
+}
+
+interface ActivityFeedProps {
+  events: TrafficEvent[];
+  filter: string;
+}
+
+export default function ActivityFeed({ events, filter }: ActivityFeedProps) {
+  const filtered = events.filter((e) => {
+    if (!filter) return true;
+    const q = filter.toLowerCase();
+    return e.host.toLowerCase().includes(q) || e.dev.toLowerCase().includes(q) || e.kind.includes(q);
+  });
+
+  const display = filtered.slice().reverse().slice(0, 200);
+
+  if (display.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-8 text-center text-slate-500">
+        Waiting for packets...
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/50">
+      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Live Events
+        </h3>
+        <span className="text-[10px] text-slate-600">
+          {filtered.length} / {events.length}
+        </span>
+      </div>
+      <div className="max-h-[500px] overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-slate-900">
+            <tr className="text-left text-slate-500">
+              <th className="px-3 py-1.5 font-medium">Time</th>
+              <th className="px-3 py-1.5 font-medium">Kind</th>
+              <th className="px-3 py-1.5 font-medium">Host</th>
+              <th className="px-3 py-1.5 font-medium">Device</th>
+            </tr>
+          </thead>
+          <tbody>
+            {display.map((e, i) => (
+              <tr
+                key={`${e.t}-${e.host}-${i}`}
+                className="border-t border-slate-800/50 hover:bg-slate-800/30"
+              >
+                <td className="whitespace-nowrap px-3 py-1 font-mono text-slate-500">
+                  {fmtTime(e.t)}
+                </td>
+                <td className="px-3 py-1">
+                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${kindStyle(e.kind)}`}>
+                    {e.kind}
+                  </span>
+                </td>
+                <td className="max-w-[200px] truncate px-3 py-1 font-medium text-cyan-300">
+                  {e.host}
+                </td>
+                <td className="max-w-[120px] truncate px-3 py-1 text-slate-400">
+                  {e.dev}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

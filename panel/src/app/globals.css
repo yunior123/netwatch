@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0a0c10;
+  color: #d8dee4;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Pulse animation for live dot */
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 4px rgba(74, 222, 128, 0.4); }
+  50% { box-shadow: 0 0 12px rgba(74, 222, 128, 0.7); }
+}
+
+.animate-pulse-green {
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+/* Smooth transitions for grid items */
+.device-card {
+  transition: all 0.15s ease;
+}
+
+.device-card:hover {
+  transform: translateY(-1px);
+}

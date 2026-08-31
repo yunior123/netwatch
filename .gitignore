@@ -1,0 +1,7 @@
+data/
+*.pid
+*.log
+__pycache__/
+.DS_Store
+panel/node_modules/
+panel/.next/
