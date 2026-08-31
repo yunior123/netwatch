@@ -110,11 +110,15 @@ def get_arp_table():
         parts = line.split()
         for i, p in enumerate(parts):
             if p == "at" and i > 0 and i + 1 < len(parts):
-                # parts[i-1] = (IP), parts[i+1] = MAC
                 ip_part = parts[i - 1].strip("()")
                 mac_part = parts[i + 1].strip("()")
-                # Hostname is the first field before (IP)
                 hostname = parts[0] if i > 1 else ""
+                # Ignore useless hostnames
+                if hostname in ("?", "mdns.mcast.net", ""):
+                    hostname = ""
+                # If hostname is a MAC address, it's not a real hostname
+                if hostname and ":" in hostname and len(hostname) == 17:
+                    hostname = ""
                 if ip_part and mac_part and mac_part != "(incomplete)" and "." in ip_part:
                     table[ip_part] = {"mac": mac_part, "hostname": hostname}
     return table
