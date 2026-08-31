@@ -78,6 +78,8 @@ OUI_DB: dict[str, str] = {
     "B0:68:E6": "Brother",  # Brother printers
     # IoT / Smart Home
     "B4:E6:2D": "Espressif", "EC:FA:BC": "Tuya", "18:B7:35": "Tuya",
+    "64:1C:AE": "Espressif",  # ESP32/IoT
+    "1C:30:08": "Tuya",  # Smart home
     "50:02:91": "Raspberry-Pi", "28:CD:C1": "Raspberry-Pi",
     # Docker/VM
     "02:42:AC": "Docker", "02:42:0A": "Docker", "08:00:27": "VirtualBox",
