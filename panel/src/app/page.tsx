@@ -15,6 +15,7 @@ import TrafficTimeline from "@/components/TrafficTimeline";
 import GeoMap from "@/components/GeoMap";
 import SankeyFlow from "@/components/SankeyFlow";
 import WorldMap from "@/components/WorldMap";
+import PerDeviceActivity from "@/components/PerDeviceActivity";
 import { useLiveData } from "@/lib/useLiveData";
 import { MergedDevice } from "@/lib/types";
 
@@ -215,7 +216,14 @@ export default function Home() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <TrafficTimeline events={events} />
               <SankeyFlow events={events} devices={traffic?.devices || {}} />
-            </div>
+           </div>
+            {/* Per-Device Activity */}
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Per-Device Activity
+             </h3>
+              <PerDeviceActivity devices={merged} domains={traffic?.domains || {}} />
+           </div>
             {/* Stats row */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <ProtocolChart events={events} domains={traffic?.domains || {}} />
