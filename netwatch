@@ -779,6 +779,71 @@ def cmd_dbstats(args):
             print(f"    {svc:12s} {color(C, str(cnt))}")
     print()
 
+def cmd_analyze(args):
+    """AI-powered analysis of network activity using NVIDIA NIM."""
+    mini_banner()
+    try:
+        from nim_analyzer import analyze_urls, investigate_domain, analyze_device
+    except ImportError:
+        print(err("nim_analyzer module not found"))
+        return
+
+    # Get NIM API key
+    nim_key = os.environ.get("NVIDIA_NIM_API_KEY", "")
+    if not nim_key:
+        try:
+            result = subprocess.run(["security", "find-generic-password", "-a", os.environ.get("USER",""), "-s", "nvidia-nim-api-key", "-w"],
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                nim_key = result.stdout.strip()
+                os.environ["NVIDIA_NIM_API_KEY"] = nim_key
+        except:
+            pass
+
+    if not nim_key:
+        print(err("NVIDIA_NIM_API_KEY not set. Set it or store in keychain:"))
+        print(info("  security add-generic-password -a $USER -s nvidia-nim-api-key -w 'nvapi-YOUR_KEY'"))
+        return
+
+    target = args.ip  # Reuse ip arg for domain or device IP
+    state = load_state()
+    devs = load_devices()
+
+    if target:
+        # Check if it's a device IP or a domain
+        if devs and target in devs.get("devices", {}):
+            # Analyze specific device
+            dev = devs["devices"][target]
+            events = state.get("events", []) if state else []
+            dev_events = [e for e in events if e.get("dev") == target]
+            print(info(f"Analyzing device {target} ({get_device_name(dev)})..."))
+            result = analyze_device(dev, dev_events)
+        else:
+            # Analyze specific domain
+            print(info(f"Investigating domain: {target}"))
+            result = investigate_domain(target)
+    else:
+        # Analyze all traffic
+        if not state:
+            print(warn("No state data — start netwatch first"))
+            return
+        events = state.get("events", [])
+        devices = state.get("devices", {})
+        print(info(f"Analyzing {len(events)} events from {len(devices)} devices..."))
+        result = analyze_urls(events, devices)
+
+    if "error" in result:
+        print(err(result["error"]))
+    else:
+        print()
+        print(color(BOLD, "  AI Security Analysis"))
+        print(color(D, "  " + "─" * 60))
+        print(result["analysis"])
+        if "tokens" in result:
+            print()
+            print(color(D, f"  Tokens: {result['tokens']}"))
+    print()
+
 def cmd_panel(args):
     mini_banner()
     start_panel()
@@ -887,7 +952,7 @@ def main():
         "devices", "who", "domains", "services", "urls",
         "scan", "tail", "live", "log", "panel", "mitm",
         "kill", "block", "rescue", "unblock",
-        "history", "search", "dbstats",
+        "history", "search", "dbstats", "analyze",
         "export", "reset", "install", "uninstall", "help"
     ]
 
@@ -929,6 +994,9 @@ def main():
         print(f"    {color(G, 'history'):12s}  Historical events (last N days)")
         print(f"    {color(G, 'search <q>'):12s}  Search events by domain pattern")
         print(f"    {color(G, 'dbstats'):12s}  Database statistics")
+        print(f"    {color(G, 'analyze'):12s}  AI security analysis (NVIDIA NIM)")
+        print(f"    {color(G, 'analyze <ip>'):12s}  Analyze specific device")
+        print(f"    {color(G, 'analyze <domain>'):12s}  Investigate domain")
         print(f"    {color(G, 'export'):12s}  Export state to JSON")
         print(f"    {color(G, 'reset'):12s}  Clear all captured data")
         print(f"    {color(G, 'install'):12s}  Install to /usr/local/bin")
@@ -961,6 +1029,7 @@ def main():
         "panel": cmd_panel, "mitm": cmd_mitm,
         "kill": cmd_kill, "rescue": cmd_rescue,
         "history": cmd_history, "search": cmd_search, "dbstats": cmd_dbstats,
+        "analyze": cmd_analyze,
         "export": cmd_export, "reset": cmd_reset,
         "install": cmd_install, "uninstall": cmd_uninstall,
     }
