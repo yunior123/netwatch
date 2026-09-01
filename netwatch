@@ -639,6 +639,113 @@ def cmd_log(args):
     for line in lines[-n:]:
         print(f"  {line}")
 
+def cmd_stats(args):
+    """Quick summary of network activity."""
+    mini_banner()
+    state = load_state()
+    devs = load_devices()
+
+    if not state and not devs:
+        print(warn("No data — run `netwatch start` first"))
+        return
+
+    events = state.get("events", []) if state else []
+    devices = devs.get("devices", {}) if devs else {}
+    domains = state.get("domains", {}) if state else {}
+
+    # Count by kind
+    kind_counts = {}
+    for e in events:
+        k = e.get("kind", "?")
+        kind_counts[k] = kind_counts.get(k, 0) + 1
+
+    # Count by service
+    svc_counts = {}
+    for e in events:
+        s = e.get("service")
+        if s:
+            svc_counts[s] = svc_counts.get(s, 0) + 1
+
+    # Active devices (last 5 min)
+    now = time.time()
+    active = sum(1 for d in devices.values() if now - d.get("last_seen", 0) < 300)
+
+    print(color(BOLD, "  Network Summary"))
+    print(color(D, "  " + "─" * 50))
+    print(f"  {'Devices:':18s} {color(C, str(len(devices)))} total, {color(G, str(active))} active")
+    print(f"  {'Events:':18s} {color(C, str(len(events)))} in memory")
+    print(f"  {'Domains:':18s} {color(C, str(len(domains)))} unique")
+    print(f"  {'Packets:':18s} {color(C, str(state.get('packets', 0))) if state else color(D, '—')}")
+    print()
+
+    if kind_counts:
+        print(color(BOLD, "  Traffic Breakdown"))
+        for k, v in sorted(kind_counts.items(), key=lambda x: -x[1]):
+            bar_len = min(30, int(v / max(kind_counts.values()) * 30))
+            bar = color(G, "█" * bar_len) + color(D, "░" * (30 - bar_len))
+            print(f"    {k:8s} {bar} {color(C, str(v))}")
+        print()
+
+    if svc_counts:
+        print(color(BOLD, "  Top Services"))
+        for s, v in sorted(svc_counts.items(), key=lambda x: -x[1])[:8]:
+            print(f"    {s:15s} {color(C, str(v))}")
+        print()
+
+    # Top devices by traffic
+    if devices:
+        print(color(BOLD, "  Top Devices"))
+        for ip, dev in sorted(devs["devices"].items(), key=lambda x: -x[1].get("traffic_events", 0))[:8]:
+            name = get_device_name(dev)
+            icon = get_device_icon(dev)
+            ev = dev.get("traffic_events", 0)
+            if ev > 0:
+                print(f"    {icon} {name:22s} {color(D, ip):18s} {color(C, str(ev))} events")
+    print()
+
+def cmd_top(args):
+    """Live top talkers (refreshing)."""
+    mini_banner()
+    print(info("Top talkers (Ctrl+C to exit, refreshes every 3s)\n"))
+    try:
+        while True:
+            state = load_state()
+            devs = load_devices()
+            if not state:
+                time.sleep(3)
+                continue
+
+            events = state.get("events", [])
+            # Count events per device in last 60s
+            now = time.time()
+            recent = [e for e in events if now - e.get("t", 0) < 60]
+            dev_counts = {}
+            for e in recent:
+                d = e.get("dev", "?")
+                dev_counts[d] = dev_counts.get(d, 0) + 1
+
+            # Clear and print
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+            print(color(C + BOLD, "  netwatch top") + color(D, " — last 60s"))
+            print(color(D, "  " + "─" * 60))
+            print(f"  {'#':3s}  {'DEVICE':25s}  {'IP':16s}  {'EVENTS':>6s}  {'BAR'}")
+            print(color(D, "  " + "─" * 60))
+
+            for rank, (ip, cnt) in enumerate(sorted(dev_counts.items(), key=lambda x: -x[1])[:15], 1):
+                dev = devs.get("devices", {}).get(ip, {}) if devs else {}
+                name = get_device_name(dev) if dev else ip
+                icon = get_device_icon(dev) if dev else "📡"
+                bar_len = min(20, int(cnt / max(dev_counts.values()) * 20))
+                bar = color(G, "█" * bar_len)
+                print(f"  {rank:3d}  {icon} {name:23s}  {ip:16s}  {color(C, str(cnt)):>6s}  {bar}")
+
+            print(color(D, f"\n  Refreshing every 3s... Ctrl+C to exit"))
+            time.sleep(3)
+    except KeyboardInterrupt:
+        print()
+        print(info("Stopped"))
+
 def cmd_export(args):
     """Export state to JSON file."""
     state = load_state()
@@ -950,10 +1057,11 @@ def main():
     valid_commands = [
         "start", "stop", "restart", "status", "open", "close",
         "devices", "who", "domains", "services", "urls",
-        "scan", "tail", "live", "log", "panel", "mitm",
+        "scan", "tail", "live", "top", "stats", "log", "panel", "mitm",
         "kill", "block", "rescue", "unblock",
         "history", "search", "dbstats", "analyze",
-        "export", "reset", "install", "uninstall", "help"
+        "export", "reset", "install", "uninstall", "help",
+        "watch",
     ]
 
     if args.help or args.command == "help":
@@ -979,9 +1087,12 @@ def main():
         print(f"    {color(G, 'domains'):12s}  Top domains being accessed")
         print(f"    {color(G, 'services'):12s}  Detected services (TikTok, Netflix...)")
         print(f"    {color(G, 'urls'):12s}  Recent HTTP URLs captured")
+        print(f"    {color(G, 'stats'):12s}  Quick network summary")
         print(f"    {color(G, 'scan'):12s}  Quick ARP scan of subnet")
         print(f"    {color(G, 'tail'):12s}  Live event stream")
         print(f"    {color(G, 'live'):12s}  Live terminal dashboard")
+        print(f"    {color(G, 'top'):12s}  Live top talkers (refreshing)")
+        print(f"    {color(G, 'watch'):12s}  Alias for live")
         print(f"    {color(G, 'log'):12s}  Show MITM log")
         print()
         print(color(BOLD, "  CONTROL"))
@@ -1017,7 +1128,7 @@ def main():
         sys.exit(1)
 
     # Alias mapping
-    aliases = {"block": "kill", "unblock": "rescue"}
+    aliases = {"block": "kill", "unblock": "rescue", "watch": "live"}
     cmd_name = aliases.get(args.command, args.command)
 
     cmds = {
@@ -1025,7 +1136,8 @@ def main():
         "status": cmd_status, "open": cmd_open, "close": cmd_close,
         "devices": cmd_devices, "who": cmd_who, "domains": cmd_domains,
         "services": cmd_services, "urls": cmd_urls,
-        "scan": cmd_scan, "tail": cmd_tail, "live": cmd_live, "log": cmd_log,
+        "scan": cmd_scan, "tail": cmd_tail, "live": cmd_live, "top": cmd_top,
+        "stats": cmd_stats, "log": cmd_log,
         "panel": cmd_panel, "mitm": cmd_mitm,
         "kill": cmd_kill, "rescue": cmd_rescue,
         "history": cmd_history, "search": cmd_search, "dbstats": cmd_dbstats,
