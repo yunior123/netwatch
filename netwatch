@@ -7,9 +7,11 @@ import sys, os, time, json, argparse, subprocess, signal, shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 DATA = ROOT / "data"
 STATE = DATA / "state.json"
 DEVICES = DATA / "devices.json"
+DB_PATH = DATA / "netwatch.db"
 ARPSPOOF = ROOT / "arpspoof.py"
 START_SCRIPT = Path("/tmp/start-arpspoof.sh")
 LOG = Path("/tmp/netwatch-arpspoof.log")
@@ -653,7 +655,129 @@ def cmd_reset(args):
     for f in [STATE, DEVICES, DATA / "kill_list.json"]:
         try: f.unlink()
         except: pass
+    # Also clear SQLite DB
+    if DB_PATH.exists():
+        try: DB_PATH.unlink()
+        except: pass
     print(ok("State cleared"))
+
+def cmd_history(args):
+    """Show historical events from SQLite DB."""
+    mini_banner()
+    if not DB_PATH.exists():
+        print(warn("No database found — start netwatch first"))
+        return
+    try:
+        import db as nwdb
+    except ImportError:
+        print(err("db module not found"))
+        return
+
+    days = getattr(args, 'days', 1)
+    since = time.time() - (days * 86400)
+    dev = getattr(args, 'device', None)
+    host = getattr(args, 'host', None)
+    kind = getattr(args, 'kind', None)
+    service = getattr(args, 'service', None)
+    limit = getattr(args, 'limit', 50)
+
+    events = nwdb.query_events(dev=dev, host=host, kind=kind, service=service,
+                                since=since, limit=limit)
+    total = nwdb.query_events_count(dev=dev, host=host, kind=kind, service=service,
+                                     since=since)
+
+    if not events:
+        print(warn(f"No events found in the last {days} day(s)"))
+        return
+
+    print(color(BOLD, f"  Historical Events (last {days}d, showing {len(events)}/{total})"))
+    print(color(D, f"  {'TIME':20s}  {'TYPE':8s}  {'DEVICE':16s}  {'SERVICE':10s}  HOST"))
+    print(color(D, "  " + "─" * 90))
+
+    for e in reversed(events):
+        t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["ts"]))
+        kind_str = e.get("kind", "?")
+        kind_color = {"tls": G, "dns": C, "mdns": M, "http": Y}.get(kind_str, D)
+        dev_str = e.get("dev", "?")
+        host_str = e.get("host", "")
+        svc_str = e.get("service", "") or ""
+        print(f"  {color(D, t):20s}  {color(kind_color, kind_str.upper()):8s}  {dev_str:16s}  {svc_str:10s}  {color(B, host_str[:50])}")
+
+    print()
+
+def cmd_search(args):
+    """Search historical events by domain/host pattern."""
+    mini_banner()
+    if not DB_PATH.exists():
+        print(warn("No database found — start netwatch first"))
+        return
+    try:
+        import db as nwdb
+    except ImportError:
+        print(err("db module not found"))
+        return
+
+    query = args.query
+    if not query:
+        print(err("Usage: netwatch search <pattern>"))
+        return
+
+    days = getattr(args, 'days', 30)
+    since = time.time() - (days * 86400)
+    events = nwdb.query_events(host=query, since=since, limit=100)
+    total = nwdb.query_events_count(host=query, since=since)
+
+    if not events:
+        print(warn(f"No events matching '{query}' in the last {days} day(s)"))
+        return
+
+    print(color(BOLD, f"  Search: '{query}' ({total} matches, showing {len(events)})"))
+    print(color(D, f"  {'TIME':20s}  {'TYPE':8s}  {'DEVICE':16s}  HOST"))
+    print(color(D, "  " + "─" * 80))
+
+    for e in reversed(events):
+        t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["ts"]))
+        kind_str = e.get("kind", "?")
+        kind_color = {"tls": G, "dns": C, "mdns": M, "http": Y}.get(kind_str, D)
+        print(f"  {color(D, t):20s}  {color(kind_color, kind_str.upper()):8s}  {e.get('dev','?'):16s}  {color(B, e.get('host','')[:50])}")
+
+    print()
+
+def cmd_dbstats(args):
+    """Show database statistics."""
+    mini_banner()
+    if not DB_PATH.exists():
+        print(warn("No database found — start netwatch first"))
+        return
+    try:
+        import db as nwdb
+        stats = nwdb.get_stats()
+    except Exception as e:
+        print(err(f"Error: {e}"))
+        return
+
+    print(color(BOLD, "  Database Statistics"))
+    print(color(D, "  " + "─" * 50))
+    print(f"  {'Total events:':20s} {color(C, str(stats['total_events']))}")
+    print(f"  {'Total devices:':20s} {color(C, str(stats['total_devices']))}")
+    print(f"  {'Total domains:':20s} {color(C, str(stats['total_domains']))}")
+    print(f"  {'DB size:':20s} {color(C, str(stats['db_size_mb']) + ' MB')}")
+    if stats['oldest_event']:
+        oldest = time.strftime("%Y-%m-%d %H:%M", time.localtime(stats['oldest_event']))
+        newest = time.strftime("%Y-%m-%d %H:%M", time.localtime(stats['newest_event']))
+        print(f"  {'Oldest event:':20s} {color(D, oldest)}")
+        print(f"  {'Newest event:':20s} {color(D, newest)}")
+    if stats['by_kind']:
+        print()
+        print(color(BOLD, "  Events by type"))
+        for kind, cnt in sorted(stats['by_kind'].items(), key=lambda x: -x[1]):
+            print(f"    {kind:12s} {color(C, str(cnt))}")
+    if stats['by_service']:
+        print()
+        print(color(BOLD, "  Events by service"))
+        for svc, cnt in sorted(stats['by_service'].items(), key=lambda x: -x[1]):
+            print(f"    {svc:12s} {color(C, str(cnt))}")
+    print()
 
 def cmd_panel(args):
     mini_banner()
@@ -749,6 +873,13 @@ def main():
     parser.add_argument("--no-banner", action="store_true")
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("-n", "--lines", type=int, default=30)
+    parser.add_argument("-d", "--days", type=int, default=1)
+    parser.add_argument("-l", "--limit", type=int, default=50)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--host", type=str, default=None)
+    parser.add_argument("--kind", type=str, default=None)
+    parser.add_argument("--service", type=str, default=None)
+    parser.add_argument("query", nargs="?", default=None)
     args = parser.parse_args()
 
     valid_commands = [
@@ -756,6 +887,7 @@ def main():
         "devices", "who", "domains", "services", "urls",
         "scan", "tail", "live", "log", "panel", "mitm",
         "kill", "block", "rescue", "unblock",
+        "history", "search", "dbstats",
         "export", "reset", "install", "uninstall", "help"
     ]
 
@@ -794,6 +926,9 @@ def main():
         print(f"    {color(G, 'unblock <ip>'):12s}  Alias for rescue")
         print()
         print(color(BOLD, "  DATA"))
+        print(f"    {color(G, 'history'):12s}  Historical events (last N days)")
+        print(f"    {color(G, 'search <q>'):12s}  Search events by domain pattern")
+        print(f"    {color(G, 'dbstats'):12s}  Database statistics")
         print(f"    {color(G, 'export'):12s}  Export state to JSON")
         print(f"    {color(G, 'reset'):12s}  Clear all captured data")
         print(f"    {color(G, 'install'):12s}  Install to /usr/local/bin")
@@ -825,6 +960,7 @@ def main():
         "scan": cmd_scan, "tail": cmd_tail, "live": cmd_live, "log": cmd_log,
         "panel": cmd_panel, "mitm": cmd_mitm,
         "kill": cmd_kill, "rescue": cmd_rescue,
+        "history": cmd_history, "search": cmd_search, "dbstats": cmd_dbstats,
         "export": cmd_export, "reset": cmd_reset,
         "install": cmd_install, "uninstall": cmd_uninstall,
     }

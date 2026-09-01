@@ -57,6 +57,11 @@ try:
     HAS_OUI = True
 except ImportError:
     HAS_OUI = False
+try:
+    import db as nwdb
+    HAS_DB = True
+except ImportError:
+    HAS_DB = False
 
 DATA = os.path.join(ROOT, "data")
 IFACE = "en0"
@@ -359,6 +364,13 @@ def add_event(src_ip, kind, host):
 
         state["devices"][src_ip] = dev
 
+        # Write to SQLite (non-blocking)
+        if HAS_DB:
+            try:
+                nwdb.insert_event(time.time(), src_ip, kind, host, service, content_type)
+            except Exception:
+                pass
+
 def refresh_arp_hostnames():
     """Periodically refresh device hostnames from ARP table."""
     while True:
@@ -428,7 +440,29 @@ def write_state():
         with open(tmp, "w") as f:
             json.dump(devs_out, f, default=str)
         os.replace(tmp, devs_path)
-        
+
+        # Flush SQLite events and upsert devices/domains
+        if HAS_DB:
+            try:
+                nwdb.flush_events()
+                for ip, dev in state["devices"].items():
+                    nwdb.upsert_device(
+                        ip=ip, mac=dev.get("mac",""), hostname=dev.get("hostname",""),
+                        vendor=dev.get("vendor",""), device_type=dev.get("device_type",""),
+                        device_model=dev.get("device_model",""), device_icon=dev.get("device_icon","📡"),
+                        first_seen=dev.get("first_seen"), last_seen=dev.get("last_seen"),
+                        traffic_events=dev.get("traffic_events",0),
+                        services=json.dumps(dict(dev.get("services",{}))),
+                        domains=json.dumps(dict(dev.get("domains",{}))))
+                for host, d in state["domains"].items():
+                    nwdb.upsert_domain(
+                        host=host, count=d.get("count",0),
+                        first_seen=d.get("first"), last_seen=d.get("last"),
+                        service=d.get("service"), content_type=d.get("content_type"),
+                        devices=json.dumps(dict(d.get("devs",{}))))
+            except Exception:
+                pass
+
         time.sleep(2)
 
 # ─── Packet handler ─────────────────────────────────────────────────
@@ -657,7 +691,19 @@ def main():
     # Start ARP hostname refresher
     refresh_thread = threading.Thread(target=refresh_arp_hostnames, daemon=True)
     refresh_thread.start()
-    
+
+    # Start DB cleanup thread (daily)
+    def db_cleanup_loop():
+        while True:
+            time.sleep(86400)  # 24h
+            if HAS_DB:
+                try:
+                    nwdb.cleanup_old()
+                except Exception:
+                    pass
+    cleanup_thread = threading.Thread(target=db_cleanup_loop, daemon=True)
+    cleanup_thread.start()
+
     # Signal handler for cleanup
     def cleanup(sig, frame):
         print("\n[*] Shutting down...")
