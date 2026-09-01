@@ -16,6 +16,7 @@ import GeoMap from "@/components/GeoMap";
 import SankeyFlow from "@/components/SankeyFlow";
 import WorldMap from "@/components/WorldMap";
 import PerDeviceActivity from "@/components/PerDeviceActivity";
+import NimAnalysis from "@/components/NimAnalysis";
 import { useLiveData } from "@/lib/useLiveData";
 import { MergedDevice } from "@/lib/types";
 
@@ -129,6 +130,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("live");
   const [captures, setCaptures] = useState<{ name: string; size: number; mtime: number }[]>([]);
   const [selectedCapture, setSelectedCapture] = useState<string | null>(null);
+  const [showNimAll, setShowNimAll] = useState(false);
 
   // Fetch captures separately
   useEffect(() => {
@@ -188,20 +190,32 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Search (always visible) */}
-        <div className="relative">
-          <input
-            type="text"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by host, device, IP, or kind..."
-            className="w-full rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-colors focus:border-cyan-700 focus:ring-1 focus:ring-cyan-700/30"
-          />
-          {filter && (
-            <button onClick={() => setFilter("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400">
-              Clear
-            </button>
-          )}
+        {/* Search + NIM */}
+        {showNimAll && (
+          <NimAnalysis events={events} onClose={() => setShowNimAll(false)} />
+        )}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by host, device, IP, or kind..."
+              className="w-full rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-colors focus:border-cyan-700 focus:ring-1 focus:ring-cyan-700/30"
+            />
+            {filter && (
+              <button onClick={() => setFilter("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400">
+                Clear
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setShowNimAll(true)}
+            title="NIM AI Security Analysis — analyze all recent events"
+            className="flex items-center gap-1.5 rounded-lg border border-cyan-800/50 bg-cyan-950/30 px-3 py-2 text-sm text-cyan-400 hover:bg-cyan-900/40 hover:text-cyan-300 transition-colors"
+          >
+            🛡️ <span className="hidden sm:inline">NIM</span>
+          </button>
         </div>
 
         {/* TAB: Live Traffic */}

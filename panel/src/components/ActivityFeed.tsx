@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { TrafficEvent, MergedDevice } from "@/lib/types";
+import NimAnalysis from "./NimAnalysis";
 
 function fmtTime(t: number): string {
   if (!t) return "—";
@@ -60,7 +62,7 @@ interface ActivityFeedProps {
 }
 
 export default function ActivityFeed({ events, filter, devices }: ActivityFeedProps) {
-  // Build IP → device lookup
+  const [analyzeTarget, setAnalyzeTarget] = useState<string | null>(null);
   const deviceMap = new Map<string, MergedDevice>();
   if (devices) {
     for (const d of devices) {
@@ -87,57 +89,72 @@ export default function ActivityFeed({ events, filter, devices }: ActivityFeedPr
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/50">
-      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Live Events
-        </h3>
-        <span className="text-[10px] text-slate-600">
-          {filtered.length} / {events.length}
-        </span>
+    <>
+      {analyzeTarget && (
+        <NimAnalysis domain={analyzeTarget} onClose={() => setAnalyzeTarget(null)} />
+      )}
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/50">
+        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Live Events
+          </h3>
+          <span className="text-[10px] text-slate-600">
+            {filtered.length} / {events.length}
+          </span>
+        </div>
+        <div className="max-h-[500px] overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-900">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-1.5 font-medium">Time</th>
+                <th className="px-3 py-1.5 font-medium">Kind</th>
+                <th className="px-3 py-1.5 font-medium">Host</th>
+                <th className="px-3 py-1.5 font-medium">Device</th>
+                <th className="px-2 py-1.5 font-medium w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {display.map((e, i) => {
+                const dev = deviceMap.get(e.dev);
+                const icon = deviceIcon(dev);
+                const name = deviceName(dev);
+                return (
+                  <tr
+                    key={`${e.t}-${e.host}-${i}`}
+                    className="border-t border-slate-800/50 hover:bg-slate-800/30 group"
+                  >
+                    <td className="whitespace-nowrap px-3 py-1 font-mono text-slate-500">
+                      {fmtTime(e.t)}
+                    </td>
+                    <td className="px-3 py-1">
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${kindStyle(e.kind)}`}>
+                        {e.kind}
+                      </span>
+                    </td>
+                    <td className="max-w-[200px] truncate px-3 py-1 font-medium text-cyan-300">
+                      {formatDomain(e.host)}
+                    </td>
+                    <td className="max-w-[160px] truncate px-3 py-1 text-slate-400">
+                      <span className="mr-1">{icon}</span>
+                      {name || e.dev}
+                      {name && <span className="ml-1 text-[10px] text-slate-600">{e.dev}</span>}
+                    </td>
+                    <td className="px-2 py-1">
+                      <button
+                        onClick={() => setAnalyzeTarget(formatDomain(e.host))}
+                        title="NIM Security Check"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-cyan-500 hover:text-cyan-300 text-sm"
+                      >
+                        🛡️
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div className="max-h-[500px] overflow-y-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-slate-900">
-            <tr className="text-left text-slate-500">
-              <th className="px-3 py-1.5 font-medium">Time</th>
-              <th className="px-3 py-1.5 font-medium">Kind</th>
-              <th className="px-3 py-1.5 font-medium">Host</th>
-              <th className="px-3 py-1.5 font-medium">Device</th>
-            </tr>
-          </thead>
-          <tbody>
-            {display.map((e, i) => {
-              const dev = deviceMap.get(e.dev);
-              const icon = deviceIcon(dev);
-              const name = deviceName(dev);
-              return (
-                <tr
-                  key={`${e.t}-${e.host}-${i}`}
-                  className="border-t border-slate-800/50 hover:bg-slate-800/30"
-                >
-                  <td className="whitespace-nowrap px-3 py-1 font-mono text-slate-500">
-                    {fmtTime(e.t)}
-                  </td>
-                  <td className="px-3 py-1">
-                    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${kindStyle(e.kind)}`}>
-                      {e.kind}
-                    </span>
-                  </td>
-                  <td className="max-w-[200px] truncate px-3 py-1 font-medium text-cyan-300">
-                    {formatDomain(e.host)}
-                  </td>
-                  <td className="max-w-[160px] truncate px-3 py-1 text-slate-400">
-                    <span className="mr-1">{icon}</span>
-                    {name || e.dev}
-                    {name && <span className="ml-1 text-[10px] text-slate-600">{e.dev}</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </>
   );
 }
