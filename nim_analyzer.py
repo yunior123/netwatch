@@ -74,10 +74,11 @@ Be specific with IPs, domains, and timestamps. If everything looks normal, say s
 
     try:
         r = requests.post(f"{NIM_BASE_URL}/chat/completions",
-                         headers=HEADERS, json=payload, timeout=60)
+                         headers=HEADERS, json=payload, timeout=120)
         r.raise_for_status()
         resp = r.json()
-        content = resp["choices"][0]["message"]["content"]
+        msg = resp["choices"][0]["message"]
+        content = msg.get("content") or msg.get("reasoning_content") or ""
         return {"analysis": content, "model": NIM_MODEL, "tokens": resp.get("usage", {})}
     except Exception as e:
         return {"error": str(e)}
@@ -121,10 +122,10 @@ Flag anything suspicious: unusual domains, high-frequency requests, known malici
 
     try:
         r = requests.post(f"{NIM_BASE_URL}/chat/completions",
-                         headers=HEADERS, json=payload, timeout=60)
+                         headers=HEADERS, json=payload, timeout=120)
         r.raise_for_status()
         resp = r.json()
-        return {"analysis": resp["choices"][0]["message"]["content"]}
+        return {"analysis": resp["choices"][0]["message"].get("content") or resp["choices"][0]["message"].get("reasoning_content") or ""}
     except Exception as e:
         return {"error": str(e)}
 
@@ -154,10 +155,10 @@ Report:
 
     try:
         r = requests.post(f"{NIM_BASE_URL}/chat/completions",
-                         headers=HEADERS, json=payload, timeout=30)
+                         headers=HEADERS, json=payload, timeout=120)
         r.raise_for_status()
         resp = r.json()
-        return {"analysis": resp["choices"][0]["message"]["content"]}
+        return {"analysis": resp["choices"][0]["message"].get("content") or resp["choices"][0]["message"].get("reasoning_content") or ""}
     except Exception as e:
         return {"error": str(e)}
 
